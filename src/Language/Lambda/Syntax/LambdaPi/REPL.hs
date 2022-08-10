@@ -28,7 +28,7 @@ import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Parser
 import RIO (Display (display), HasLogFunc, IsString (fromString), MonadIO, MonadReader, MonadThrow (throwM), MonadUnliftIO, catch, displayShow, logError, logInfo, logWarn)
 import RIO.State (MonadState)
-import Text.Megaparsec (optional, (<|>))
+import Text.Megaparsec (eof, optional, (<|>))
 
 data Stmt
   = Eval (Term 'Checkable)
@@ -187,7 +187,7 @@ readEvalPrintM ::
   Text ->
   m ()
 readEvalPrintM inp = do
-  case parseNamed "<repl>" stmtP inp of
+  case parseNamed "<repl>" (space *> stmtP <* eof) inp of
     Left a -> logError $ display $ T.pack a
     Right stmt ->
       runCommand inp stmt `catch` \case

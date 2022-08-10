@@ -220,7 +220,7 @@ parseNamed ::
 parseNamed name p = (errorBundlePretty +++ id) . runParser (runReaderT p mempty) name
 
 lambdaExp :: Parser (Term 'Checkable)
-lambdaExp = termChkP <* eof
+lambdaExp = space *> termChkP <* eof
 
 -- >>> either error tryEval $ parseOnly (lambdaExp) "(λ(n : Nat). natElim (λ x. Nat) n (λ z. succ : Nat -> Nat : *)) 2 40"
 -- Right (42,ℕ)
