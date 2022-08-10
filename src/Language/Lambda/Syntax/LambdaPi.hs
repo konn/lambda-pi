@@ -492,7 +492,7 @@ prettyInfPrec lvl d (Cons te te' te2 te3) =
       . prettyChkPrec lvl 11 te3
 prettyInfPrec lvl d (VecElim te te' te2 te3 te4 te5) =
   showParen (d > 10) $
-    showString "natElim"
+    showString "vecElim"
       . showChar ' '
       . prettyChkPrec lvl 11 te
       . showChar ' '
