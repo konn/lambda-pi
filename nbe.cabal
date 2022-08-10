@@ -1,0 +1,96 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.4.
+--
+-- see: https://github.com/sol/hpack
+
+name:           nbe
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/nbe#readme>
+homepage:       https://github.com/githubuser/nbe#readme
+bug-reports:    https://github.com/githubuser/nbe/issues
+author:         Author name here
+maintainer:     example@example.com
+copyright:      2022 Author name here
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/nbe
+
+library
+  exposed-modules:
+      Language.Lambda.Eval
+      Language.Lambda.NbE
+      Language.Lambda.Syntax
+      Language.Lambda.Syntax.HigherKinded
+      Language.Lambda.Syntax.LambdaPi
+      Language.Lambda.Syntax.LambdaPi.Parser
+      Language.Lambda.Syntax.SimplyTyped
+  other-modules:
+      Paths_nbe
+  hs-source-dirs:
+      src
+  ghc-options: -Wall
+  build-depends:
+      attoparsec
+    , base >=4.7 && <5
+    , bifunctors
+    , bound
+    , bytestring
+    , containers
+    , deriving-compat
+    , diagnose
+    , equational-reasoning
+    , ghc-typelits-presburger
+    , hashable
+    , lens
+    , megaparsec
+    , parser-combinators
+    , parsers
+    , semigroups
+    , split
+    , text
+    , transformers
+    , type-natural
+    , unordered-containers
+    , vector
+  default-language: Haskell2010
+
+executable nbe-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_nbe
+  hs-source-dirs:
+      app
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      attoparsec
+    , base >=4.7 && <5
+    , bifunctors
+    , bound
+    , bytestring
+    , containers
+    , deriving-compat
+    , diagnose
+    , equational-reasoning
+    , ghc-typelits-presburger
+    , hashable
+    , lens
+    , megaparsec
+    , nbe
+    , parser-combinators
+    , parsers
+    , semigroups
+    , split
+    , text
+    , transformers
+    , type-natural
+    , unordered-containers
+    , vector
+  default-language: Haskell2010
