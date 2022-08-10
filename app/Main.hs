@@ -20,7 +20,7 @@ printResult inp (val, ty) = do
   T.putStrLn inp
   putStr "\t= "
   print val
-  putStr "\t:: "
+  putStr "\t: "
   print ty
 
 reportError :: String -> IO ()
