@@ -145,7 +145,7 @@ inferEvalM ::
 inferEvalM trm = do
   ctx <- typingContextM
   typ <-
-    either (throwM . ParseError) pure $ typeInfer 0 ctx trm
+    either (throwM . TypeError) pure $ typeInfer 0 ctx trm
   evalCtx <- evalContextM
   let !val = evalInf evalCtx trm
   pure (val, typ)
