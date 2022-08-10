@@ -6,6 +6,7 @@
 module Main (main) where
 
 import Data.Generics.Labels ()
+import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Language.Lambda.Syntax.LambdaPi.REPL
 import RIO
@@ -29,4 +30,4 @@ main = do
     runRIO AppEnv {..} $
       forever $ do
         liftIO $ putStr ">>> " >> hFlush stdout
-        liftIO T.getLine >>= readEvalPrintM
+        liftIO T.getLine >>= readEvalPrintM . T.strip
