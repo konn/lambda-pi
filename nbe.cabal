@@ -25,13 +25,8 @@ source-repository head
 
 library
   exposed-modules:
-      Language.Lambda.Eval
-      Language.Lambda.NbE
-      Language.Lambda.Syntax
-      Language.Lambda.Syntax.HigherKinded
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Parser
-      Language.Lambda.Syntax.SimplyTyped
   other-modules:
       Paths_nbe
   hs-source-dirs:
