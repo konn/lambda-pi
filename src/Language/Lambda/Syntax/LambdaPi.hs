@@ -277,8 +277,16 @@ typeCheck !i ctx (Inf e) v = do
   v' <- typeInfer i ctx e
   unless (quote 0 v == quote 0 v') $
     Left $
-      "Type mismatch (inf); (term, expected, actual) = "
-        <> show (e, v, v')
+      "Type mismatch (inf); (term, expected, actual) = ("
+        <> prettyInfPrec
+          i
+          10
+          e
+          ( showString ", " $
+              prettyChkPrec i 10 (quote i v) $
+                showString ", " $
+                  prettyChkPrec i 10 (quote i v') ")"
+          )
         <> "; in context: "
         <> show ctx
 typeCheck !i ctx (Lam e) (VPi ty ty') = do
