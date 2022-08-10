@@ -151,8 +151,8 @@ inferEvalM trm = do
   pure (val, typ)
 
 typingContextM ::
-  MonadState REPLContext m => m (HashMap Name Value)
-typingContextM = HM.mapKeys Global . fmap snd <$> use #bindings
+  MonadState REPLContext m => m Context
+typingContextM = HM.mapKeys Global <$> use #bindings
 
 evalContextM ::
   MonadState REPLContext m => m Env

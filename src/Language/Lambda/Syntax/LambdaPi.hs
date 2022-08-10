@@ -21,7 +21,7 @@ by Andres Löh, Conor McBride, and Wouter Swiestra.
 module Language.Lambda.Syntax.LambdaPi where
 
 import Control.Arrow ((+++))
-import Control.Lens (Ixed (ix), at, (%~), (^.), (^?!))
+import Control.Lens (Ixed (ix), at, (%~), (.~), (^.), (^?!))
 import Control.Monad (unless)
 import Data.Function (fix, (&))
 import Data.Generics.Labels ()
@@ -169,14 +169,15 @@ evalChk :: Env -> Term 'Checkable -> Value
 evalChk ctx (Inf te) = evalInf ctx te
 evalChk ctx (Lam e) = VLam $ \x -> evalChk (ctx & #localBinds %~ (x <|)) e
 
-type Context = HashMap Name Type
+type Context = HashMap Name (Maybe Value, Type)
 
 type Result = Either String
 
 typeInfer :: Int -> Context -> Term 'Inferable -> Result Type
 typeInfer !i ctx (e ::: rho) = do
   typeCheck i ctx rho VStar
-  let !t = evalChk mempty rho
+  let !t =
+        evalChk (toEvalContext ctx) rho
   typeCheck i ctx e t
   pure t
 typeInfer _ _ Star = pure VStar
@@ -185,33 +186,35 @@ typeInfer _ _ Zero = pure VNat
 typeInfer i ctx (Succ k) = VNat <$ typeCheck i ctx k VNat
 typeInfer i ctx (NatElim m mz ms k) = do
   typeCheck i ctx m $ VPi VNat $ const VStar
-  let mVal = evalChk mempty m
+  let mVal = evalChk (toEvalContext ctx) m
   typeCheck i ctx mz $ mVal @@ VZero
   typeCheck i ctx ms $
     VPi VNat $ \l ->
       VPi (mVal @@ l) $ const $ mVal @@ VSucc l
   typeCheck i ctx k VNat
-  let kVal = evalChk mempty k
+  let kVal = evalChk (toEvalContext ctx) k
   pure $ mVal @@ kVal
 typeInfer i ctx (Vec a k) =
   VStar <$ typeCheck i ctx a VStar <* typeCheck i ctx k VNat
 typeInfer i ctx (Nil a) =
-  VVec (evalChk mempty a) VZero <$ typeCheck i ctx a VStar
+  VVec (evalChk (toEvalContext ctx) a) VZero <$ typeCheck i ctx a VStar
 typeInfer i ctx (Cons a n x xs) = do
-  let aVal = evalChk mempty a
-      nVal = evalChk mempty n
+  let ctx' = toEvalContext ctx
+      aVal = evalChk ctx' a
+      nVal = evalChk ctx' n
   typeCheck i ctx n VNat
   typeCheck i ctx a VStar
   typeCheck i ctx x aVal
   typeCheck i ctx xs $ VVec aVal nVal
   pure $ VVec aVal $ VSucc nVal
 typeInfer i ctx (VecElim a m mnil mcons n vs) = do
+  let ctx' = toEvalContext ctx
   typeCheck i ctx a VStar
-  let aVal = evalChk mempty a
+  let aVal = evalChk ctx' a
   typeCheck i ctx m $
     VPi VNat $ \k ->
       VPi (VVec aVal k) $ const VStar
-  let mVal = evalChk mempty m
+  let mVal = evalChk ctx' m
   typeCheck i ctx mnil $
     vapps [mVal, VZero, VNil aVal]
   typeCheck i ctx mcons $
@@ -221,43 +224,50 @@ typeInfer i ctx (VecElim a m mnil mcons n vs) = do
           VPi (vapps [mVal, k, ys]) $
             const $ vapps [mVal, VSucc k, VCons aVal k y ys]
   typeCheck i ctx n VNat
-  let nVal = evalChk mempty n
+  let nVal = evalChk ctx' n
   typeCheck i ctx vs $ VVec aVal nVal
-  let vsVal = evalChk mempty vs
+  let vsVal = evalChk ctx' vs
   pure $ vapps [mVal, nVal, vsVal]
 typeInfer i ctx (LamAnn ty body) = do
+  let ctx' = toEvalContext ctx
   typeCheck i ctx ty VStar
-  let tyVal = evalChk mempty ty
-  -- FIXME: substitute appropriate occurences of ty in bodyTy
+  let tyVal = evalChk ctx' ty
   bodyTy <-
-    typeInfer (i + 1) (HM.insert (Local i) tyVal ctx) $
+    typeInfer (i + 1) (HM.insert (Local i) (Nothing, tyVal) ctx) $
       substInf 0 (Free (Local i)) body
   pure $
     VPi tyVal $ \v ->
       substLocal i v bodyTy
 typeInfer _ ctx (Free x) = case HM.lookup x ctx of
-  Just t -> pure t
+  Just (_, t) -> pure t
   Nothing -> Left $ "Unknown identifier: " <> show x
 typeInfer !i ctx (Pi rho rho') = do
   typeCheck i ctx rho VStar
-  let t = evalChk mempty rho
+  let ctx' = toEvalContext ctx
+      t = evalChk ctx' rho
   typeCheck
     (i + 1)
-    (HM.insert (Local i) t ctx)
+    (HM.insert (Local i) (Nothing, t) ctx)
     (substChk 0 (Free (Local i)) rho')
     VStar
   pure VStar
 typeInfer !i ctx (e :@: e') = do
+  let ctx' = toEvalContext ctx
   typeInfer i ctx e >>= \case
     VPi t t' -> do
       typeCheck i ctx e' t
-      pure $ t' $ evalChk mempty e'
+      pure $ t' $ evalChk ctx' e'
     ty ->
       Left $
         "LHS of application must be has a function type, but got: "
           <> show (e, quote 0 ty)
 typeInfer _ _ bd@Bound {} =
   Left $ "Impossible: the type-checker encounters a bound variable: " <> show bd
+
+toEvalContext :: Context -> Env
+toEvalContext ctx =
+  mempty & #namedBinds
+    .~ HM.fromList [(a, v) | (Global a, (Just v, _)) <- HM.toList ctx]
 
 vapps :: NonEmpty Type -> Type
 vapps = foldl1' (@@) . NE.toList
@@ -274,7 +284,7 @@ typeCheck !i ctx (Inf e) v = do
 typeCheck !i ctx (Lam e) (VPi ty ty') = do
   typeCheck
     (i + 1)
-    (HM.insert (Local i) ty ctx)
+    (HM.insert (Local i) (Nothing, ty) ctx)
     (substChk 0 (Free (Local i)) e)
     $ ty' $ vfree $ Local i
 typeCheck _ _ e ty =
@@ -389,7 +399,7 @@ id' :: Term 'Inferable
 id' = Lam (Lam $ Bound' 0) ::: Pi' Star' (Pi' (Bound' 0) (Bound' 1))
 
 typeEnv :: Context
-typeEnv = HM.fromList [(Global "a", VStar), (Global "x", vfree $ Global "a"), (Global "y", vfree $ Global "a")]
+typeEnv = HM.fromList [(Global "a", (Nothing, VStar)), (Global "x", (Nothing, vfree $ Global "a")), (Global "y", (Nothing, vfree $ Global "a"))]
 
 pattern Nat' :: Term 'Checkable
 pattern Nat' = Inf Nat
