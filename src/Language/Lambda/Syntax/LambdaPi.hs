@@ -2,10 +2,11 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -20,16 +21,18 @@ by Andres Löh, Conor McBride, and Wouter Swiestra.
 module Language.Lambda.Syntax.LambdaPi where
 
 import Control.Arrow ((+++))
+import Control.Lens (Ixed (ix), at, (%~), (^.), (^?!))
 import Control.Monad (unless)
-import Data.Function (fix)
+import Data.Function (fix, (&))
+import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.Hashable (Hashable)
 import Data.List (foldl1')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import Data.Sequence (Seq, (<|))
-import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
@@ -99,16 +102,26 @@ data Neutral
 vfree :: Name -> Value
 vfree = VNeutral . NFree
 
-type Env = Seq Value
+data Env = Env
+  { namedBinds :: !(HM.HashMap Text Value)
+  , localBinds :: !(Seq Value)
+  }
+  deriving (Show, Generic)
+  deriving (Semigroup, Monoid) via GenericSemigroupMonoid Env
 
 evalInf :: Env -> Term 'Inferable -> Value
 evalInf ctx (e ::: _) = evalChk ctx e
-evalInf ctx (LamAnn _ e) = VLam $ \x -> evalInf (x <| ctx) e
-evalInf ctx (Bound n) = ctx `Seq.index` n
+evalInf ctx (LamAnn _ e) = VLam $ \x ->
+  evalInf
+    (ctx & #localBinds %~ (x <|))
+    e
+evalInf ctx (Bound n) = ctx ^?! #localBinds . ix n
+evalInf ctx (Free (Global g))
+  | Just v <- ctx ^. #namedBinds . at g = v
 evalInf _ (Free n) = vfree n
 evalInf ctx (f :@: x) = evalInf ctx f @@ evalChk ctx x
 evalInf _ Star = VStar
-evalInf ctx (Pi t t') = VPi (evalChk ctx t) $ \x -> evalChk (x <| ctx) t'
+evalInf ctx (Pi t t') = VPi (evalChk ctx t) $ \x -> evalChk (ctx & #localBinds %~ (x <|)) t'
 evalInf _ Nat = VNat
 evalInf _ Zero = VZero
 evalInf ctx (Succ k) = VSucc $ evalChk ctx k
@@ -154,7 +167,7 @@ l @@ r = error $ "Could not apply: " <> show (quote 0 l, quote 0 r)
 
 evalChk :: Env -> Term 'Checkable -> Value
 evalChk ctx (Inf te) = evalInf ctx te
-evalChk ctx (Lam e) = VLam $ \x -> evalChk (x <| ctx) e
+evalChk ctx (Lam e) = VLam $ \x -> evalChk (ctx & #localBinds %~ (x <|)) e
 
 type Context = HashMap Name Type
 
@@ -538,13 +551,6 @@ occursInf i (VecElim te' te2 te3 te4 te5 te6) =
   occursChk i te' || occursChk i te2 || occursChk i te3 || occursChk i te4
     || occursChk i te5
     || occursChk i te6
-
-trm :: Term 'Inferable
-trm =
-  LamAnn Star' $ LamAnn Nat' $ LamAnn (Bound' 1) $ LamAnn (Vec' (Bound' 2) (Bound' 1)) $ Cons (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
-
--- >>> typeInfer 0 mempty trm
--- Right (Π(x_0 : *). Π(x_1 : ℕ). Π(x_2 : x_0). Π(x_3 : Vec x_0 x_1). Vec x_0 (succ x_1))
 
 natElim' :: Term 'Inferable
 natElim' =

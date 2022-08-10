@@ -27,6 +27,7 @@ library
   exposed-modules:
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Parser
+      Language.Lambda.Syntax.LambdaPi.REPL
   other-modules:
       Paths_nbe
   hs-source-dirs:
@@ -42,12 +43,15 @@ library
     , deriving-compat
     , diagnose
     , equational-reasoning
+    , generic-lens
     , ghc-typelits-presburger
     , hashable
     , lens
     , megaparsec
+    , mtl
     , parser-combinators
     , parsers
+    , rio
     , semigroups
     , split
     , text
@@ -74,13 +78,16 @@ executable nbe-exe
     , deriving-compat
     , diagnose
     , equational-reasoning
+    , generic-lens
     , ghc-typelits-presburger
     , hashable
     , lens
     , megaparsec
+    , mtl
     , nbe
     , parser-combinators
     , parsers
+    , rio
     , semigroups
     , split
     , text

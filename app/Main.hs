@@ -1,29 +1,32 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE RecordWildCards #-}
+
 module Main (main) where
 
-import Control.Monad (forever)
-import Data.Text (Text)
+import Data.Generics.Labels ()
 import qualified Data.Text.IO as T
-import Language.Lambda.Syntax.LambdaPi (Type, Value, tryEval)
-import Language.Lambda.Syntax.LambdaPi.Parser
-import System.IO (hFlush, hPutStrLn, stderr, stdout)
+import Language.Lambda.Syntax.LambdaPi.REPL
+import RIO
+
+data AppEnv = AppEnv {logFun :: LogFunc, envRef :: SomeRef REPLContext}
+  deriving (Generic)
+
+instance HasLogFunc AppEnv where
+  logFuncL = #logFun
+  {-# INLINE logFuncL #-}
+
+instance HasStateRef REPLContext AppEnv where
+  stateRefL = #envRef
+  {-# INLINE stateRefL #-}
 
 main :: IO ()
-main = forever $ do
-  putStr ">>> "
-  hFlush stdout
-  src <- T.getLine
-  either reportError (printResult src) $
-    tryEval =<< parseOnly lambdaExp src
-
-printResult :: Text -> (Value, Type) -> IO ()
-printResult inp (val, ty) = do
-  T.putStrLn inp
-  putStr "\t= "
-  print val
-  putStr "\t: "
-  print ty
-
-reportError :: String -> IO ()
-reportError err = do
-  hPutStrLn stderr "Compile error:\n"
-  hPutStrLn stderr err
+main = do
+  logOpts <- logOptionsHandle stdout False
+  envRef <- newSomeRef mempty
+  withLogFunc logOpts $ \logFun ->
+    runRIO AppEnv {..} $
+      forever $ do
+        liftIO $ putStr ">>> " >> hFlush stdout
+        liftIO T.getLine >>= readEvalPrintM

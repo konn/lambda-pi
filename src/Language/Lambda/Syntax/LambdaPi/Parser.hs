@@ -93,24 +93,34 @@ varP = do
     Just i -> Bound i
     Nothing -> Free $ Global ident
 
+binder :: Parser [(Text, Term 'Checkable)]
+binder =
+  parens
+    ( flip (map . flip (,))
+        <$> some identifier
+        <* symbol ":" <*> (termChkP <?> "variable type")
+    )
+
+binders :: Parser [(Text, Term 'Checkable)]
+binders = concat <$> some binder
+
 lamAnnP :: Parser (Term 'Inferable)
 lamAnnP = label "Typed lambda abstraction" $
   lexeme $
     try $ do
       reserved "λ"
-      (bindee, typ) <-
-        parens
-          ( (,) <$> identifier
-              <* symbol ":" <*> (termChkP <?> "variable type")
-          )
-          <* symbol "."
-      binding bindee $ LamAnn typ <$> termInfP
+      bindees <- binders <* symbol "."
+      foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) termInfP bindees
 
 piP :: Parser (Term 'Inferable)
 piP = label "Pi-binding" $ do
   reserved "Π"
-  (bindee, typ) <- parens $ (,) <$> identifier <*> termChkP
-  binding bindee $ Pi typ <$> termChkP
+  bindees <- binders <* symbol "."
+  let (half, [(var0, ty0)]) = splitAt (length bindees - 1) bindees
+  foldr
+    (\(var, ty) p -> binding var $ Pi ty . Inf <$> p)
+    (binding var0 $ Pi ty0 <$> termChkP)
+    half
 
 eliminatorsP :: Parser (Term 'Inferable)
 eliminatorsP =
@@ -189,15 +199,25 @@ unAnnLamP = label "Unannotated lambda" $
   lexeme $
     try $ do
       reserved "λ"
-      bindee <- identifier <?> "variable name"
-      binding bindee $
-        Lam <$ symbol "." <*> (termChkP <?> "lambda body")
+      bindee <- some (identifier <?> "variable name")
+      void $ symbol "."
+      foldr
+        (\var p -> binding var $ Lam <$> p)
+        (termChkP <?> "lambda body")
+        bindee
 
 parseOnly ::
   Parser a ->
   Text ->
   Either String a
-parseOnly p = (errorBundlePretty +++ id) . runParser (runReaderT p mempty) "<input>"
+parseOnly = parseNamed "<input>"
+
+parseNamed ::
+  String ->
+  Parser a ->
+  Text ->
+  Either String a
+parseNamed name p = (errorBundlePretty +++ id) . runParser (runReaderT p mempty) name
 
 lambdaExp :: Parser (Term 'Checkable)
 lambdaExp = termChkP <* eof
