@@ -26,6 +26,8 @@ dependencies:
 - bound
 - bytestring
 - containers
+- dependent-sum
+- dependent-map
 - deriving-compat
 - diagnose
 - dlist
@@ -41,6 +43,7 @@ dependencies:
 - rio
 - semigroups
 - semigroupoids
+- some
 - split
 - text
 - transformers

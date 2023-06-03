@@ -25,6 +25,7 @@ source-repository head
 
 library
   exposed-modules:
+      Control.Monad.Combinators.Expr.Parametrised
       Data.Bifunctor.Utils
       Data.List.NonEmpty.Utils
       Language.Lambda.Syntax.LambdaPi
@@ -43,6 +44,8 @@ library
     , bound
     , bytestring
     , containers
+    , dependent-map
+    , dependent-sum
     , deriving-compat
     , diagnose
     , dlist
@@ -58,6 +61,7 @@ library
     , rio
     , semigroupoids
     , semigroups
+    , some
     , split
     , text
     , transformers
@@ -80,6 +84,8 @@ executable lambda-pi-exe
     , bound
     , bytestring
     , containers
+    , dependent-map
+    , dependent-sum
     , deriving-compat
     , diagnose
     , dlist
@@ -96,6 +102,7 @@ executable lambda-pi-exe
     , rio
     , semigroupoids
     , semigroups
+    , some
     , split
     , text
     , transformers

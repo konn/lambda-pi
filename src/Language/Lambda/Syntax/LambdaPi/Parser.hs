@@ -10,6 +10,7 @@ import Control.Applicative.Combinators (sepBy)
 import qualified Control.Applicative.Combinators.NonEmpty as NE
 import Control.Arrow ((+++), (>>>))
 import Control.Monad (unless, when)
+import Control.Monad.Combinators.Expr
 import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, local)
 import qualified Data.Bifunctor as Bi
 import Data.Char (isAlphaNum, isLetter, isSpace)
