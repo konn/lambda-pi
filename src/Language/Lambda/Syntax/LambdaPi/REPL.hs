@@ -14,6 +14,7 @@ module Language.Lambda.Syntax.LambdaPi.REPL where
 import Control.Exception (Exception)
 import Control.Lens (At (at), use, (.=), (.~), (<<?=))
 import Control.Monad (when)
+import Control.Monad.Combinators.Expr.HigherKinded
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.Generics.Labels ()
@@ -171,7 +172,7 @@ evalContextM =
     mempty & #namedBinds .~ HM.mapMaybe fst dic
 
 stmtP :: Parser Stmt
-stmtP = clearP <|> letP <|> assumeP <|> Eval <$> termChkP
+stmtP = clearP <|> letP <|> assumeP <|> Eval <$> checkableExprP
 
 clearP :: Parser Stmt
 clearP =
@@ -187,7 +188,7 @@ assumeP =
 
 letP :: Parser Stmt
 letP =
-  Let <$ reserved "let" <*> identifier <* symbol "=" <*> termInfP
+  Let <$ reserved "let" <*> identifier <* symbol "=" <*> inferableExprP
 
 readEvalPrintM ::
   ( MonadThrow m

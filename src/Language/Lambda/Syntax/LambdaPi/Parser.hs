@@ -1,8 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 
@@ -11,16 +9,15 @@ module Language.Lambda.Syntax.LambdaPi.Parser where
 import Control.Applicative (Alternative (..))
 import Control.Applicative.Combinators (sepBy)
 import qualified Control.Applicative.Combinators.NonEmpty as NE
-import Control.Arrow ((+++), (>>>))
+import Control.Arrow ((+++))
 import Control.Monad (unless, when)
 import Control.Monad.Combinators.Expr.HigherKinded
 import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, local)
 import qualified Data.Bifunctor as Bi
-import Data.Char (isAlphaNum, isLetter, isSpace)
-import qualified Data.DList as DL
+import Data.Char (isAlphaNum, isLetter)
 import qualified Data.Dependent.Map as DMap
-import Data.Foldable (asum)
 import Data.Functor (void, (<&>))
+import Data.Functor.Apply
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as HS
@@ -28,12 +25,15 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty.Utils as NE
 import qualified Data.Map as Map
 import Data.Semigroup
+import Data.Semigroup.Foldable (asum1)
+import qualified Data.Set as Set
+import Data.Some (Some (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import Language.Lambda.Syntax.LambdaPi
-import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhileP, try, (<?>))
-import Text.Megaparsec.Char (string)
+import Text.Megaparsec (Parsec, between, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhileP, try, (<?>))
+import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import qualified Text.Megaparsec.Char.Lexer as L
 
@@ -45,43 +45,49 @@ operators :: [[HOperator SMode Parser Term]]
 operators =
   [
     [ infixR theMode theMode theMode $
-        (:::) <$ symbol ":"
+        (:::) <$ reserved ":"
     ]
   ,
     [ InfixR theMode theMode theMode $
         ( \l p ->
             Pi l <$> anonymousBind p
         )
-          <$ (symbol "->" <|> symbol "→")
+          <$ (reserved "->" <|> reserved "→")
     ]
-  ,
-    [ infixL theMode theMode theMode $
-        (:@:) <$ symbol ""
-    ]
+    {- ,
+      [ infixL theMode theMode theMode $
+          (:@:) <$ appSpaceP
+      ] -}
   ]
 
-termExprParsers :: ParserDict SMode Parser Term
-termExprParsers =
-  makeHExprParser termTermParsers operators
+appSpaceP :: Parser ()
+appSpaceP =
+  notFollowedBy (unwrapApplicative $ asum1 $ NE.map (WrapApplicative . symbol) opNames)
 
-termTermParsers :: ParserDict SMode Parser Term
-termTermParsers =
+opNames :: NonEmpty Text
+opNames = NE.fromList ["->", "→", ":", "#"]
+
+exprParsers :: ParserDict SMode Parser Term
+exprParsers =
+  makeHExprParser (Set.fromList [Some SInferable, Some SCheckable]) basicTermParsers operators
+
+basicTermParsers :: ParserDict SMode Parser Term
+basicTermParsers =
   DMap.fromList
     [ SInferable
         ~=> piP
-        <|> lamAnnP
+        <|> try lamAnnP
         <|> primTypeP
         <|> compoundTyConP
         <|> datConP
         <|> eliminatorsP
         <|> varP
-        <|> parens (parserOf SInferable termExprParsers)
+        <|> parens (parserOf SInferable exprParsers)
     , SCheckable
-        ~=> unAnnLamP
-        <|> Inf
-        <$> termInfP
-        <|> recordChkP
-        <|> parens (parserOf SCheckable termExprParsers)
+        ~=> try unAnnLamP
+        <|> try recordChkP
+        <|> try (Inf <$> parserOf theMode basicTermParsers)
+        <|> parens (parserOf SCheckable exprParsers)
     ]
 
 binding :: Text -> Parser a -> Parser a
@@ -93,12 +99,12 @@ anonymousBind = local $ HM.map succ
 space :: Parser ()
 space =
   L.space
-    (void $ satisfy isSpace)
+    space1
     (skipLineComment "--")
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record"]
+keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "->", "→", ":"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isLetter ch || ch == '_'
@@ -157,7 +163,7 @@ binder =
     ( flip (fmap . flip (,))
         <$> NE.some identifier
         <* symbol ":"
-        <*> (termChkP <?> "variable type")
+        <*> (checkableExprP <?> "variable type")
     )
 
 binders :: Parser (NonEmpty (Text, Term 'Checkable))
@@ -169,22 +175,16 @@ lamAnnP = label "Typed lambda abstraction" $
     try $ do
       reserved "λ"
       bindees <- binders <* symbol "."
-      foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) termInfP bindees
-
-unsnocNE :: NonEmpty a -> ([a], a)
-unsnocNE = NE.uncons >>> uncurry (go mempty)
-  where
-    go !acc x Nothing = (DL.toList acc, x)
-    go !acc x (Just (y :| ys)) = go (acc `DL.snoc` x) y (NE.nonEmpty ys)
+      foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) inferableExprP bindees
 
 piP :: Parser (Term 'Inferable)
 piP = label "Pi-binding" $ do
   reserved "Π"
   bindees <- binders <* symbol "."
-  let (half, (var0, ty0)) = unsnocNE bindees
+  let (half, (var0, ty0)) = NE.unsnoc bindees
   foldr
     (\(var, ty) p -> binding var $ Pi ty . Inf <$> p)
-    (binding var0 $ Pi ty0 <$> termChkP)
+    (binding var0 $ Pi ty0 <$> checkableExprP)
     half
 
 eliminatorsP :: Parser (Term 'Inferable)
@@ -210,7 +210,7 @@ fieldSeqP tokenName sep fldSep = do
     ( (,)
         <$> (identifier <?> tokenName)
         <* fldSep
-        <*> termChkP
+        <*> checkableExprP
       )
       `sepBy` try sep
   let dups =
@@ -237,74 +237,16 @@ datConP =
     <|> LamAnn Nat' (Succ (Bound' 0)) <$ reserved "succ"
     <|> cons' <$ reserved "cons"
 
-sigP :: Parser (Term 'Inferable)
-sigP =
-  lexeme $ try $ (:::) <$> termChkP <* symbol ":" <*> termChkP
-
-appP :: Parser (Term 'Inferable)
-appP =
-  (:@:) <$> termInfP <*> (Inf <$> termInfP)
-
-termInfP :: Parser (Term 'Inferable)
-termInfP = termInfPrecP 0
+inferableExprP :: Parser (Term 'Inferable)
+inferableExprP = parserOf theMode exprParsers
 
 naturalP :: Parser (Term 'Inferable)
 naturalP =
   lexeme decimal <&> \n ->
     foldr ($) Zero (replicate n (Succ . Inf))
 
-termInfPrecP :: Int -> Parser (Term 'Inferable)
-termInfPrecP 0 =
-  -- Processes Pi-constructs and annotated lambdas
-  piP
-    <|> lamAnnP
-    <|> (handleTrailingArrow =<< termInfPrecP 1)
-  where
-    handleTrailingArrow t =
-      try (Pi (Inf t) <$ (symbol "->" <|> symbol "→") <*> anonymousBind (termChkPrecP 0))
-        <|> pure t
-termInfPrecP 1 =
-  -- Processes type annotations
-  asum
-    [ do
-        t <- termInfPrecP 2
-        try (parseSig $ Inf t) <|> pure t
-    , parseSig =<< parens unAnnLamP
-    ]
-termInfPrecP 2 =
-  foldl (:@:) <$> termInfPrecP 3 <*> many (termChkPrecP 3)
-termInfPrecP _ =
-  primTypeP
-    <|> compoundTyConP
-    <|> datConP
-    <|> eliminatorsP
-    <|> varP
-    <|> parens (termInfPrecP 0)
-
-fieldProjP :: Parser (Term 'Inferable)
-fieldProjP =
-  try $
-    (:#:)
-      <$> termInfPrecP 4
-      <* symbol "#"
-      <*> (identifier <?> "field")
-
-parseSig :: Term 'Checkable -> Parser (Term 'Inferable)
-parseSig e =
-  (e :::) <$ symbol ":" <*> termChkPrecP 0
-
-termChkPrecP :: Int -> Parser (Term 'Checkable)
-termChkPrecP 0 = unAnnLamP <|> Inf <$> termInfPrecP 0
-termChkPrecP d =
-  try (parens unAnnLamP) <|> Inf <$> termInfPrecP d
-
-termChkP :: Parser (Term 'Checkable)
-termChkP =
-  label "checkable terms" $
-    try (parens unAnnLamP)
-      <|> unAnnLamP
-      <|> Inf <$> termInfP
-      <|> recordChkP
+checkableExprP :: Parser (Term 'Checkable)
+checkableExprP = parserOf theMode exprParsers
 
 recordChkP :: Parser (Term 'Checkable)
 recordChkP =
@@ -323,7 +265,7 @@ unAnnLamP = label "Unannotated lambda" $
       void $ symbol "."
       foldr
         (\var p -> binding var $ Lam <$> p)
-        (termChkP <?> "lambda body")
+        (checkableExprP <?> "lambda body")
         bindee
 
 parseOnly ::
@@ -338,9 +280,3 @@ parseNamed ::
   Text ->
   Either String a
 parseNamed name p = (errorBundlePretty +++ id) . runParser (runReaderT p mempty) name
-
-lambdaExp :: Parser (Term 'Checkable)
-lambdaExp = space *> termChkP <* eof
-
--- >>> parseOnly lambdaExp "(λ n. n) : Nat -> Nat"
--- Left "<input>:1:10:\n  |\n1 | (\955 n. n) : Nat -> Nat\n  |          ^\nunexpected ':'\nexpecting end of input\n"

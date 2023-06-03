@@ -28,6 +28,7 @@ import Data.Bifunctor.Utils (secondA)
 import Data.Foldable (traverse_)
 import Data.Function (fix, (&))
 import Data.GADT.Compare (GCompare (..), GEq (..), GOrdering (..), defaultGeq)
+import Data.GADT.Show
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -51,6 +52,10 @@ data Mode = Inferable | Checkable
 data SMode (m :: Mode) where
   SInferable :: SMode 'Inferable
   SCheckable :: SMode 'Checkable
+
+instance GShow SMode where
+  gshowsPrec _ SInferable = showString "SInferable"
+  gshowsPrec _ SCheckable = showString "SCheckable"
 
 instance GEq SMode where
   geq = defaultGeq
