@@ -1,7 +1,10 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# OPTIONS_GHC -Wno-unused-imports #-}
+{-# LANGUAGE PolyKinds #-}
 
 module Language.Lambda.Syntax.LambdaPi.Parser where
 
@@ -10,17 +13,17 @@ import Control.Applicative.Combinators (sepBy)
 import qualified Control.Applicative.Combinators.NonEmpty as NE
 import Control.Arrow ((+++), (>>>))
 import Control.Monad (unless, when)
-import Control.Monad.Combinators.Expr
+import Control.Monad.Combinators.Expr.HigherKinded
 import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, local)
 import qualified Data.Bifunctor as Bi
 import Data.Char (isAlphaNum, isLetter, isSpace)
 import qualified Data.DList as DL
+import qualified Data.Dependent.Map as DMap
 import Data.Foldable (asum)
 import Data.Functor (void, (<&>))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as HS
-import qualified Data.IntMap as IntMap
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty.Utils as NE
 import qualified Data.Map as Map
@@ -37,6 +40,49 @@ import qualified Text.Megaparsec.Char.Lexer as L
 type VarMap = HashMap Text Int
 
 type Parser = ReaderT VarMap (Parsec Void Text)
+
+operators :: [[HOperator SMode Parser Term]]
+operators =
+  [
+    [ infixR theMode theMode theMode $
+        (:::) <$ symbol ":"
+    ]
+  ,
+    [ InfixR theMode theMode theMode $
+        ( \l p ->
+            Pi l <$> anonymousBind p
+        )
+          <$ (symbol "->" <|> symbol "→")
+    ]
+  ,
+    [ infixL theMode theMode theMode $
+        (:@:) <$ symbol ""
+    ]
+  ]
+
+termExprParsers :: ParserDict SMode Parser Term
+termExprParsers =
+  makeHExprParser termTermParsers operators
+
+termTermParsers :: ParserDict SMode Parser Term
+termTermParsers =
+  DMap.fromList
+    [ SInferable
+        ~=> piP
+        <|> lamAnnP
+        <|> primTypeP
+        <|> compoundTyConP
+        <|> datConP
+        <|> eliminatorsP
+        <|> varP
+        <|> parens (parserOf SInferable termExprParsers)
+    , SCheckable
+        ~=> unAnnLamP
+        <|> Inf
+        <$> termInfP
+        <|> recordChkP
+        <|> parens (parserOf SCheckable termExprParsers)
+    ]
 
 binding :: Text -> Parser a -> Parser a
 binding v = local (HM.insert v 0 . HM.map succ)

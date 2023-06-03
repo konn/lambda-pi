@@ -27,6 +27,7 @@ import qualified Data.Bifunctor as Bi
 import Data.Bifunctor.Utils (secondA)
 import Data.Foldable (traverse_)
 import Data.Function (fix, (&))
+import Data.GADT.Compare (GCompare (..), GEq (..), GOrdering (..), defaultGeq)
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -46,6 +47,28 @@ import Numeric.Natural (Natural)
 
 data Mode = Inferable | Checkable
   deriving (Show, Eq, Ord, Generic)
+
+data SMode (m :: Mode) where
+  SInferable :: SMode 'Inferable
+  SCheckable :: SMode 'Checkable
+
+instance GEq SMode where
+  geq = defaultGeq
+
+instance GCompare SMode where
+  gcompare SInferable SCheckable = GLT
+  gcompare SInferable SInferable = GEQ
+  gcompare SCheckable SCheckable = GEQ
+  gcompare SCheckable SInferable = GGT
+
+class KnownMode mode where
+  theMode :: SMode mode
+
+instance KnownMode 'Inferable where
+  theMode = SInferable
+
+instance KnownMode 'Checkable where
+  theMode = SCheckable
 
 data family Term (mode :: Mode)
 

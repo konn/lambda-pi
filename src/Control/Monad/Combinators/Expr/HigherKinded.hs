@@ -12,8 +12,14 @@
 
 module Control.Monad.Combinators.Expr.HigherKinded (
   HOperator (..),
+  infixN,
+  infixL,
+  infixR,
   makeHExprParser,
+  ParserDict,
   Compose (..),
+  (~=>),
+  parserOf,
 ) where
 
 import Control.Applicative (Alternative)
@@ -30,34 +36,37 @@ import Data.Dependent.Sum
 import Data.Foldable
 import Data.Functor.Compose (Compose (..))
 import Data.GADT.Compare (GCompare, geq)
+import Data.Kind (Type)
 import Data.Monoid (Alt (..))
 
+type HOperator :: forall {k}. (k -> Type) -> (Type -> Type) -> (k -> Type) -> Type
 data HOperator k m f where
   InfixN
     , InfixL
     , InfixR ::
-    k l -> k r -> k v -> m (f l -> f r -> f v) -> HOperator k m f
+    k l -> k r -> k v -> m (f l -> m (f r) -> m (f v)) -> HOperator k m f
+  Postfix :: k l -> k v -> m (l -> v) -> HOperator k m f
 
 makeHExprParser ::
   (MonadPlus m, GCompare k) =>
-  TermParsers k m f ->
+  ParserDict k m f ->
   [[HOperator k m f]] ->
-  TermParsers k m f
+  ParserDict k m f
 makeHExprParser = foldl' addPrecLevel
 
 data HOpInOut k m f l v where
-  HInfixLike :: k r -> m (f l -> f r -> f v) -> HOpInOut k m f l v
+  HInfixLike :: k r -> m (f l -> m (f r) -> m (f v)) -> HOpInOut k m f l v
 
 asumDMapWithKey :: Alternative g => (forall v. k v -> f v -> g a) -> DMap k f -> g a
 asumDMapWithKey f = getAlt . getConst . DMap.traverseWithKey (fmap (Const . Alt) . f)
 
-dsumParsers :: Alternative m => TermParsers t m f -> m (DSum t f)
+dsumParsers :: Alternative m => ParserDict t m f -> m (DSum t f)
 dsumParsers = asumDMapWithKey $ \tv (Compose p) ->
   (tv :=>) <$> p
 
 newtype InfixInOutDic k m f
   = InfixInOutDic
-      (TermParsers k (Compose (DMap k) (Compose DList)) (Flip (HOpInOut k m f)))
+      (ParserDict k (Compose (DMap k) (Compose DList)) (Flip (HOpInOut k m f)))
 
 singletonInfixInOutDic :: k l -> k v -> HOpInOut k m f l v -> InfixInOutDic k m f
 singletonInfixInOutDic frm dst =
@@ -95,14 +104,19 @@ instance GCompare k => Semigroup (InfixLDic k m f) where
 instance GCompare k => Monoid (InfixLDic k m f) where
   mempty = InfixLDic mempty
 
-type TermParsers k m f = DMap k (Compose m f)
+type ParserDict k m f = DMap k (Compose m f)
+
+infixr 1 ~=>
+
+(~=>) :: k a -> f (g a) -> DSum k (Compose f g)
+l ~=> r = l :=> Compose r
 
 addPrecLevel ::
   forall k m f.
   (GCompare k, MonadPlus m) =>
-  TermParsers k m f ->
+  ParserDict k m f ->
   [HOperator k m f] ->
-  TermParsers k m f
+  ParserDict k m f
 addPrecLevel terms ops = DMap.mapWithKey (const . Compose . go) terms
   where
     someTerm = dsumParsers terms
@@ -138,15 +152,16 @@ addPrecLevel terms ops = DMap.mapWithKey (const . Compose . go) terms
               , singletonInfixL l v $ HInfixLike r p
               , mempty
               )
+            _ -> mempty
         )
         ops
 
-termOf :: (GCompare k, Alternative m) => k x -> TermParsers k m f -> m (f x)
-termOf tv = maybe empty getCompose . DMap.lookup tv
+parserOf :: (GCompare k, Alternative m) => k x -> ParserDict k m f -> m (f x)
+parserOf tv = maybe empty getCompose . DMap.lookup tv
 
 parseFixN ::
-  (GCompare k, Alternative m) =>
-  TermParsers k m f ->
+  (GCompare k, MonadPlus m) =>
+  ParserDict k m f ->
   InfixInOutDic k m f ->
   k from ->
   k to ->
@@ -165,8 +180,7 @@ parseFixN terms (InfixInOutDic ndic) frm dst x =
                     foldMap
                     ( \(Flip (HInfixLike tr p)) -> do
                         f <- p
-                        y <- termOf tr terms
-                        pure $ f x y
+                        f x $ parserOf tr terms
                     )
                     ents
               )
@@ -177,7 +191,7 @@ parseFixN terms (InfixInOutDic ndic) frm dst x =
 parseFixL ::
   forall k m f from to.
   (GCompare k, MonadPlus m) =>
-  TermParsers k m f ->
+  ParserDict k m f ->
   InfixLDic k m f ->
   k from ->
   k to ->
@@ -196,11 +210,11 @@ parseFixL terms (InfixLDic ldic) = goL
               foldMap
               ( getCompose >>> \(kret :=> HInfixLike tr p) -> do
                   f <- p
-                  y <- termOf tr terms
-                  let !z = f x y
-                      fall = case geq kret dst of
-                        Just Refl -> pure z
-                        Nothing -> empty
+                  !z <- f x $ parserOf tr terms
+                  let
+                    fall = case geq kret dst of
+                      Just Refl -> pure z
+                      Nothing -> empty
                   goL kret dst z <|> fall
               )
         )
@@ -209,7 +223,7 @@ parseFixL terms (InfixLDic ldic) = goL
 parseFixR ::
   forall k m f from to.
   (GCompare k, MonadPlus m) =>
-  TermParsers k m f ->
+  ParserDict k m f ->
   InfixInOutDic k m f ->
   k from ->
   k to ->
@@ -232,15 +246,29 @@ parseFixR terms (InfixInOutDic rdic) = goR
                     foldMap
                     ( \(Flip (HInfixLike tr p)) -> do
                         f <- p
-                        ky :=> !fy <- someTerm
-                        let defY = case geq ky tr of
-                              Just Refl -> pure fy
-                              Nothing -> empty
-                        y <- goR ky tr fy <|> defY
-                        pure $ f x y
+
+                        f x $ do
+                          ky :=> !fy <- someTerm
+                          let defY = case geq ky tr of
+                                Just Refl -> pure fy
+                                Nothing -> empty
+                          goR ky tr fy <|> defY
                     )
                     ents
               )
               $ DMap.lookup frm dic
         )
         $ DMap.lookup dst fixR
+
+infixN
+  , infixL
+  , infixR ::
+    Functor m =>
+    k l ->
+    k r ->
+    k v ->
+    m (f l -> f r -> f v) ->
+    HOperator k m f
+infixN l r v mf = InfixN l r v $ mf <&> \f fl mfr -> f fl <$> mfr
+infixL l r v mf = InfixL l r v $ mf <&> \f fl mfr -> f fl <$> mfr
+infixR l r v mf = InfixR l r v $ mf <&> \f fl mfr -> f fl <$> mfr
