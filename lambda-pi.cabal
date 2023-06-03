@@ -1,17 +1,17 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.35.0.
 --
 -- see: https://github.com/sol/hpack
 
-name:           nbe
+name:           lambda-pi
 version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/githubuser/nbe#readme>
-homepage:       https://github.com/githubuser/nbe#readme
-bug-reports:    https://github.com/githubuser/nbe/issues
-author:         Author name here
-maintainer:     example@example.com
-copyright:      2022 Author name here
+description:    Please see the README on GitHub at <https://github.com/konn/lambda-pi#readme>
+homepage:       https://github.com/konn/lambda-pi#readme
+bug-reports:    https://github.com/konn/lambda-pi/issues
+author:         Hiromi ISHII
+maintainer:     konn.jinro_at_gmail.com
+copyright:      (c) 2022- Hiromi ISHII
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
@@ -21,15 +21,18 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: https://github.com/githubuser/nbe
+  location: https://github.com/konn/lambda-pi
 
 library
   exposed-modules:
+      Data.Bifunctor.Utils
+      Data.List.NonEmpty.Utils
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Parser
       Language.Lambda.Syntax.LambdaPi.REPL
+      Language.Lambda.Syntax.LambdaPi.TreesThatGrow
   other-modules:
-      Paths_nbe
+      Paths_lambda_pi
   hs-source-dirs:
       src
   ghc-options: -Wall
@@ -42,6 +45,7 @@ library
     , containers
     , deriving-compat
     , diagnose
+    , dlist
     , equational-reasoning
     , generic-lens
     , ghc-typelits-presburger
@@ -52,6 +56,7 @@ library
     , parser-combinators
     , parsers
     , rio
+    , semigroupoids
     , semigroups
     , split
     , text
@@ -61,10 +66,10 @@ library
     , vector
   default-language: Haskell2010
 
-executable nbe-exe
+executable lambda-pi-exe
   main-is: Main.hs
   other-modules:
-      Paths_nbe
+      Paths_lambda_pi
   hs-source-dirs:
       app
   ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
@@ -77,17 +82,19 @@ executable nbe-exe
     , containers
     , deriving-compat
     , diagnose
+    , dlist
     , equational-reasoning
     , generic-lens
     , ghc-typelits-presburger
     , hashable
+    , lambda-pi
     , lens
     , megaparsec
     , mtl
-    , nbe
     , parser-combinators
     , parsers
     , rio
+    , semigroupoids
     , semigroups
     , split
     , text

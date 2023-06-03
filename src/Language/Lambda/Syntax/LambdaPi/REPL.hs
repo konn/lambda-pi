@@ -2,12 +2,12 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Language.Lambda.Syntax.LambdaPi.REPL where
 
@@ -26,7 +26,7 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Parser
-import RIO (Display (display), HasLogFunc, IsString (fromString), MonadIO, MonadReader, MonadThrow (throwM), MonadUnliftIO, catch, displayShow, logError, logInfo, logWarn)
+import RIO (Display (display), HasLogFunc, IsString (fromString), MonadIO, MonadReader, MonadThrow (throwM), MonadUnliftIO, NonEmpty, catch, displayShow, logError, logInfo, logWarn)
 import RIO.State (MonadState)
 import Text.Megaparsec (eof, optional, (<|>))
 
@@ -34,7 +34,7 @@ data Stmt
   = Eval (Term 'Checkable)
   | Let Text (Term 'Inferable)
   | Clear (Maybe Text)
-  | Assume [(Text, Term 'Checkable)]
+  | Assume (NonEmpty (Text, Term 'Checkable))
   deriving (Show)
 
 newtype REPLContext = REPLCtx {bindings :: HashMap Text (Maybe Value, Type)}
@@ -89,6 +89,15 @@ evalM src (Inf trm) = do
   logInfo $ display src
   logInfo $ "\t= " <> displayShow val
   logInfo $ "\t: " <> displayShow typ
+evalM src recd@MkRecord {} = do
+  ctx <- evalContextM
+  _Γ <- typingContextM
+  case tryEvalWith _Γ ctx recd of
+    Left err -> throwM $ TypeError err
+    Right (val, typ) -> do
+      logInfo $ display src
+      logInfo $ "\t= " <> displayShow val
+      logInfo $ "\t: " <> displayShow typ
 evalM src Lam {} = do
   throwM $ CouldNotInfer src
 
@@ -106,7 +115,8 @@ assumeM var ty = do
   tyVal <- checkTypeM ty VStar
   m <- #bindings . at var <<?= (Nothing, tyVal)
   when (isJust m) $
-    logWarn $ "Overriding existing binding for `" <> display var <> "'"
+    logWarn $
+      "Overriding existing binding for `" <> display var <> "'"
   pure undefined
 
 checkTypeM ::
@@ -165,12 +175,14 @@ stmtP = clearP <|> letP <|> assumeP <|> Eval <$> termChkP
 
 clearP :: Parser Stmt
 clearP =
-  Clear <$ reserved "clear"
+  Clear
+    <$ reserved "clear"
     <*> optional identifier
 
 assumeP :: Parser Stmt
 assumeP =
-  Assume <$ reserved "assume"
+  Assume
+    <$ reserved "assume"
     <*> binders
 
 letP :: Parser Stmt

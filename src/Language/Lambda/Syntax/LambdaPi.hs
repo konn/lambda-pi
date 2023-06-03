@@ -11,26 +11,32 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {- | Implementation based on:
-
-<A Tutorial Implementation of a Dependently Typed Lambda Calculus https://www.andres-loeh.de/LambdaPi/>
+"<https://www.andres-loeh.de/LambdaPi/ A Tutorial Implementation of a Dependently Typed Lambda Calculus>"
 by Andres Löh, Conor McBride, and Wouter Swiestra.
 -}
 module Language.Lambda.Syntax.LambdaPi where
 
-import Control.Arrow ((+++))
+import Control.Arrow ((+++), (>>>))
 import Control.Lens (Ixed (ix), at, (%~), (.~), (^.), (^?!))
 import Control.Monad (unless)
+import qualified Data.Bifunctor as Bi
+import Data.Bifunctor.Utils (secondA)
+import Data.Foldable (traverse_)
 import Data.Function (fix, (&))
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.Hashable (Hashable)
-import Data.List (foldl1')
+import Data.List (foldl1', sort, sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe (fromMaybe)
+import Data.Monoid (Endo (..))
+import Data.Semigroup.Foldable (intercalateMap1)
 import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import Data.Sequence (Seq, (<|))
 import Data.Text (Text)
@@ -56,18 +62,25 @@ data instance Term 'Inferable
   | Zero
   | Succ (Term 'Checkable)
   | Vec (Term 'Checkable) (Term 'Checkable)
-  | Nil (Term 'Checkable)
   | Cons (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable)
   | VecElim (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable)
+  | Variant [(Text, Term 'Checkable)]
+  | Record [(Text, Term 'Checkable)]
+  | -- | Field Projection
+    Term 'Inferable :#: Text
+  | Nil (Term 'Checkable)
   deriving (Show, Eq, Ord)
 
 infixl 0 :::
 
 infixl 9 :@:
 
+infixl 9 :#:
+
 data instance Term 'Checkable
   = Inf (Term 'Inferable)
   | Lam (Term 'Checkable)
+  | MkRecord [(Text, Term 'Checkable)]
   deriving (Show, Eq, Ord)
 
 data Name = Global Text | Local Int | Quote Int
@@ -85,6 +98,9 @@ data Value
   | VPi Value (Value -> Value)
   | VNeutral Neutral
   | VVec Value Value
+  | VVariant (HashMap Text Value)
+  | VRecord (HashMap Text Value)
+  | VMkRecord (HashMap Text Value)
   | VNil Value
   | VCons Value Value Value Value
   deriving (Generic)
@@ -97,6 +113,7 @@ data Neutral
   | NApp Neutral Value
   | NNatElim Value Value Value Neutral
   | NVecElim Value Value Value Value Value Neutral
+  | NProjField Neutral Text
   deriving (Generic)
 
 vfree :: Name -> Value
@@ -137,6 +154,27 @@ evalInf ctx (Cons a k v vk) =
     (evalChk ctx vk)
 evalInf ctx (VecElim a m mnil mcons k vk) =
   evalVecElim (evalChk ctx a) (evalChk ctx m) (evalChk ctx mnil) (evalChk ctx mcons) (evalChk ctx k) (evalChk ctx vk)
+evalInf ctx (Variant vars) = VVariant $ HM.fromList $ map (Bi.second $ evalChk ctx) vars
+evalInf ctx (Record flds) = VRecord $ HM.fromList $ map (Bi.second $ evalChk ctx) flds
+evalInf ctx (r :#: f) = evalProjField f (evalInf ctx r)
+
+evalProjField :: Text -> Value -> Value
+evalProjField f =
+  \case
+    VMkRecord flds ->
+      fromMaybe
+        ( error $
+            "Impossible: given record doesn't have a field `"
+              <> T.unpack f
+              <> "': "
+              <> show (sort $ HM.keys flds)
+        )
+        $ HM.lookup f flds
+    VNeutral n -> VNeutral $ NProjField n f
+    v ->
+      error $
+        "Impossible: non-evaulable record field projection: "
+          <> show (f, quote 0 v)
 
 evalVecElim :: Value -> Value -> Value -> Value -> Value -> Value -> Value
 evalVecElim aVal mVal mnilVal mconsVal =
@@ -168,6 +206,8 @@ l @@ r = error $ "Could not apply: " <> show (quote 0 l, quote 0 r)
 evalChk :: Env -> Term 'Checkable -> Value
 evalChk ctx (Inf te) = evalInf ctx te
 evalChk ctx (Lam e) = VLam $ \x -> evalChk (ctx & #localBinds %~ (x <|)) e
+evalChk ctx (MkRecord recs) =
+  VRecord $ HM.fromList $ map (Bi.second $ evalChk ctx) recs
 
 type Context = HashMap Name (Maybe Value, Type)
 
@@ -207,6 +247,12 @@ typeInfer i ctx (Cons a n x xs) = do
   typeCheck i ctx x aVal
   typeCheck i ctx xs $ VVec aVal nVal
   pure $ VVec aVal $ VSucc nVal
+typeInfer i ctx (Variant vars) =
+  VStar
+    <$ traverse_ (flip (typeCheck i ctx) VStar . snd) vars
+typeInfer i ctx (Record flds) =
+  VStar
+    <$ traverse_ (flip (typeCheck i ctx) VStar . snd) flds
 typeInfer i ctx (VecElim a m mnil mcons n vs) = do
   let ctx' = toEvalContext ctx
   typeCheck i ctx a VStar
@@ -222,7 +268,8 @@ typeInfer i ctx (VecElim a m mnil mcons n vs) = do
       VPi aVal $ \y ->
         VPi (VVec aVal k) $ \ys ->
           VPi (vapps [mVal, k, ys]) $
-            const $ vapps [mVal, VSucc k, VCons aVal k y ys]
+            const $
+              vapps [mVal, VSucc k, VCons aVal k y ys]
   typeCheck i ctx n VNat
   let nVal = evalChk ctx' n
   typeCheck i ctx vs $ VVec aVal nVal
@@ -263,11 +310,27 @@ typeInfer !i ctx (e :@: e') = do
           <> show (e, quote 0 ty)
 typeInfer _ _ bd@Bound {} =
   Left $ "Impossible: the type-checker encounters a bound variable: " <> show bd
+typeInfer !i ctx (e :#: f) = do
+  typeInfer i ctx e >>= \case
+    VRecord flds ->
+      case HM.lookup f flds of
+        Just ty -> pure ty
+        Nothing ->
+          Left $
+            "Record doesn't have the required field `"
+              <> T.unpack f
+              <> "': "
+              <> show (map fst $ toOrderedList flds)
+    ty ->
+      Left $
+        "LHS of record projection must be record, but got: "
+          <> show (e, quote 0 ty)
 
 toEvalContext :: Context -> Env
 toEvalContext ctx =
-  mempty & #namedBinds
-    .~ HM.fromList [(a, v) | (Global a, (Just v, _)) <- HM.toList ctx]
+  mempty
+    & #namedBinds
+      .~ HM.fromList [(a, v) | (Global a, (Just v, _)) <- HM.toList ctx]
 
 vapps :: NonEmpty Type -> Type
 vapps = foldl1' (@@) . NE.toList
@@ -294,7 +357,9 @@ typeCheck !i ctx (Lam e) (VPi ty ty') = do
     (i + 1)
     (HM.insert (Local i) (Nothing, ty) ctx)
     (substChk 0 (Free (Local i)) e)
-    $ ty' $ vfree $ Local i
+    $ ty'
+    $ vfree
+    $ Local i
 typeCheck _ _ e ty =
   Left $ "Type check failed: " <> show (e, quote 0 ty)
 
@@ -312,6 +377,8 @@ substInf i r (Cons a n x xs) =
   Cons (substChk i r a) (substChk i r n) (substChk i r x) (substChk i r xs)
 substInf i r (VecElim a m mn mc k vk) =
   VecElim (substChk i r a) (substChk i r m) (substChk i r mn) (substChk i r mc) (substChk i r k) (substChk i r vk)
+substInf i r (Variant vars) = Variant $ map (Bi.second $ substChk i r) vars
+substInf i r (Record flds) = Record $ map (Bi.second $ substChk i r) flds
 substInf _ _ Star = Star
 substInf i r (Pi t t') = Pi (substChk i r t) (substChk (i + 1) r t')
 substInf !i r bd@(Bound j)
@@ -320,10 +387,12 @@ substInf !i r bd@(Bound j)
 substInf _ _ f@Free {} = f
 substInf !i r (e :@: e') =
   substInf i r e :@: substChk i r e'
+substInf !i r (e :#: f) = substInf i r e :#: f
 
 substChk :: Int -> Term 'Inferable -> Term 'Checkable -> Term 'Checkable
 substChk !i r (Inf e) = Inf $ substInf i r e
 substChk !i r (Lam e) = Lam $ substChk (i + 1) r e
+substChk !i r (MkRecord flds) = MkRecord $ map (Bi.second $ substChk i r) flds
 
 substLocal :: Int -> Value -> Type -> Value
 substLocal i v (VLam f) = VLam $ substLocal i v . f
@@ -339,6 +408,9 @@ substLocal i v (VVec va va') = VVec (substLocal i v va) (substLocal i v va')
 substLocal i v (VNil va) = VNil $ substLocal i v va
 substLocal i v (VCons va va' va2 va3) =
   VCons (substLocal i v va) (substLocal i v va') (substLocal i v va2) (substLocal i v va3)
+substLocal i v (VVariant vars) = VVariant $ fmap (substLocal i v) vars
+substLocal i v (VRecord flds) = VRecord $ fmap (substLocal i v) flds
+substLocal i v (VMkRecord flds) = VMkRecord $ fmap (substLocal i v) flds
 
 substLocalNeutral :: Int -> Value -> Neutral -> Either Neutral Value
 substLocalNeutral i v (NFree (Local j))
@@ -363,6 +435,10 @@ substLocalNeutral i v (NVecElim a f fnil fcons k kv) =
    in NVecElim aVal fVal fnilVal fconsVal kVal
         +++ evalVecElim aVal fVal fnilVal fconsVal kVal
         $ substLocalNeutral i v kv
+substLocalNeutral i v (NProjField r f) =
+  case substLocalNeutral i v r of
+    Right rec -> Right $ evalProjField f rec
+    Left n -> Left $ NProjField n f
 
 quote :: Int -> Value -> Term 'Checkable
 quote i (VLam f) = Lam $ quote (i + 1) $ f $ vfree $ Quote i
@@ -376,16 +452,25 @@ quote i (VCons a n x xs) = Inf $ Cons (quote i a) (quote i n) (quote i x) (quote
 quote i (VPi v f) =
   Inf $ Pi (quote i v) $ quote (i + 1) $ f $ vfree $ Quote i
 quote i (VNeutral n) = Inf $ quoteNeutral i n
+quote i (VVariant vars) = Inf $ Variant $ toOrderedList $ fmap (quote i) vars
+quote i (VRecord flds) = Inf $ Record $ HM.toList $ fmap (quote i) flds
+quote i (VMkRecord flds) = MkRecord $ HM.toList $ fmap (quote i) flds
+
+toOrderedList :: HashMap Text a -> [(Text, a)]
+toOrderedList = HM.toList >>> sortOn fst
 
 quoteNeutral :: Int -> Neutral -> Term 'Inferable
 quoteNeutral i (NFree x) = boundFree i x
 quoteNeutral i (NApp n v) = quoteNeutral i n :@: quote i v
 quoteNeutral i (NNatElim m mz ms k) =
   NatElim (quote i m) (quote i mz) (quote i ms) $
-    Inf $ quoteNeutral i k
+    Inf $
+      quoteNeutral i k
 quoteNeutral i (NVecElim a m mz ms k xs) =
   VecElim (quote i a) (quote i m) (quote i mz) (quote i ms) (quote i k) $
-    Inf $ quoteNeutral i xs
+    Inf $
+      quoteNeutral i xs
+quoteNeutral i (NProjField r f) = quoteNeutral i r :#: f
 
 boundFree :: Int -> Name -> Term 'Inferable
 boundFree i (Quote k) = Bound $ i - k - 1
@@ -428,7 +513,9 @@ plus' =
         ( Lam $
             Lam $
               Lam $
-                Succ' $ Inf $ Bound 1 :@: Bound' 0
+                Succ' $
+                  Inf $
+                    Bound 1 :@: Bound' 0
         )
         (Bound' 0)
     )
@@ -453,16 +540,26 @@ prettyInfPrec lvl _ (te ::: te') =
 prettyInfPrec _ _ Star = showString "*"
 prettyInfPrec lvl d (LamAnn te te') =
   showParen (d > 4) $
-    showString "λ(x_" . shows lvl . showString " : " . prettyChkPrec lvl d te
+    showString "λ(x_"
+      . shows lvl
+      . showString " : "
+      . prettyChkPrec lvl d te
       . showString "). "
       . prettyInfPrec (lvl + 1) 4 te'
-prettyInfPrec lvl d (Pi te te') =
-  showParen (d > 4) $
-    showString "Π(x_" . shows lvl
-      . showString " : "
-      . prettyChkPrec lvl 4 te
-      . showString "). "
-      . prettyChkPrec (lvl + 1) 4 te'
+prettyInfPrec lvl d (Pi te te')
+  | occursChk 0 te' =
+      showParen (d > 4) $
+        showString "Π(x_"
+          . shows lvl
+          . showString " : "
+          . prettyChkPrec lvl 4 te
+          . showString "). "
+          . prettyChkPrec (lvl + 1) 4 te'
+  | otherwise =
+      showParen (d > 5) $
+        prettyChkPrec lvl 6 te
+          . showString " -> "
+          . prettyChkPrec (lvl + 1) 5 te'
 prettyInfPrec lvl d (NatElim te te' te2 te3) =
   showParen (d > 10) $
     showString "natElim"
@@ -479,7 +576,8 @@ prettyInfPrec lvl _ (Bound n) =
 prettyInfPrec lvl _ (Free na) = prettyName lvl na
 prettyInfPrec lvl d (te :@: te') =
   showParen (d > 10) $
-    prettyInfPrec lvl 10 te . showChar ' '
+    prettyInfPrec lvl 10 te
+      . showChar ' '
       . prettyChkPrec lvl 11 te'
 prettyInfPrec _ _ Nat = showString "ℕ"
 prettyInfPrec _ _ Zero = showString "0"
@@ -491,7 +589,8 @@ prettyInfPrec lvl d sc@(Succ te) =
         showString "succ " . prettyChkPrec lvl 11 te
 prettyInfPrec lvl d (Vec te te') =
   showParen (d > 10) $
-    showString "Vec " . prettyChkPrec lvl 11 te
+    showString "Vec "
+      . prettyChkPrec lvl 11 te
       . showChar ' '
       . prettyChkPrec lvl 11 te'
 prettyInfPrec lvl d (Nil te) =
@@ -523,6 +622,36 @@ prettyInfPrec lvl d (VecElim te te' te2 te3 te4 te5) =
       . prettyChkPrec lvl 11 te4
       . showChar ' '
       . prettyChkPrec lvl 11 te5
+prettyInfPrec lvl _ (Variant vars) =
+  showString "(| "
+    . appEndo
+      ( maybe
+          mempty
+          ( intercalateMap1 (Endo $ showString " | ") $ \(cnstr, typ) ->
+              Endo $
+                showString (T.unpack cnstr)
+                  . showString " : "
+                  . prettyChkPrec lvl 0 typ
+          )
+          $ NE.nonEmpty vars
+      )
+    . showString " |)"
+prettyInfPrec lvl _ (Record flds) =
+  showString "{ "
+    . appEndo
+      ( maybe
+          mempty
+          ( intercalateMap1 (Endo $ showString " , ") $ \(cnstr, typ) ->
+              Endo $
+                showString (T.unpack cnstr)
+                  . showString " : "
+                  . prettyChkPrec lvl 0 typ
+          )
+          $ NE.nonEmpty flds
+      )
+    . showString " }"
+prettyInfPrec lvl _ (e :#: f) =
+  prettyInfPrec lvl 11 e <> showChar '#' <> showString (T.unpack f)
 
 prettyAsNat :: Term 'Inferable -> Maybe Natural
 prettyAsNat Zero = Just 0
@@ -538,12 +667,29 @@ prettyChkPrec :: Level -> Int -> Term 'Checkable -> ShowS
 prettyChkPrec lvl d (Inf te') = prettyInfPrec lvl d te'
 prettyChkPrec lvl d (Lam te') =
   showParen (d > 4) $
-    showString "λx_" . shows lvl . showString ". "
+    showString "λx_"
+      . shows lvl
+      . showString ". "
       . prettyChkPrec (lvl + 1) 4 te'
+prettyChkPrec lvl _ (MkRecord flds) =
+  showString "{ "
+    . appEndo
+      ( maybe
+          mempty
+          ( intercalateMap1 (Endo $ showString " , ") $ \(cnstr, typ) ->
+              Endo $
+                showString (T.unpack cnstr)
+                  . showString " = "
+                  . prettyChkPrec lvl 0 typ
+          )
+          $ NE.nonEmpty flds
+      )
+    . showString " }"
 
 occursChk :: Int -> Term 'Checkable -> Bool
 occursChk i (Inf te') = occursInf i te'
 occursChk i (Lam te') = occursChk (i + 1) te'
+occursChk i (MkRecord flds) = any (occursChk i . snd) flds
 
 occursInf :: Int -> Term 'Inferable -> Bool
 occursInf i (te' ::: te2) = occursChk i te' || occursChk i te2
@@ -566,47 +712,53 @@ occursInf i (Vec te' te2) = occursChk i te' || occursChk i te2
 occursInf i (Nil te') = occursChk i te'
 occursInf i (Cons te' te2 te3 te4) = occursChk i te' || occursChk i te2 || occursChk i te3 || occursChk i te4
 occursInf i (VecElim te' te2 te3 te4 te5 te6) =
-  occursChk i te' || occursChk i te2 || occursChk i te3 || occursChk i te4
+  occursChk i te'
+    || occursChk i te2
+    || occursChk i te3
+    || occursChk i te4
     || occursChk i te5
     || occursChk i te6
+occursInf i (Variant vars) = any (occursChk i . snd) vars
+occursInf i (Record flds) = any (occursChk i . snd) flds
+occursInf i (e :#: _) = occursInf i e
 
 natElim' :: Term 'Inferable
 natElim' =
-  LamAnn (Pi' Nat' Star') $
-    LamAnn (Inf $ Bound 0 :@: Zero') $
-      LamAnn
-        ( Pi'
-            Nat'
-            ( Pi'
-                (Inf $ Bound 2 :@: Bound' 0)
-                (Inf $ Bound 3 :@: Inf (Succ (Bound' 1)))
-            )
-        )
-        $ LamAnn Nat' $
-          NatElim (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
+  LamAnn (Pi' Nat' Star')
+    $ LamAnn (Inf $ Bound 0 :@: Zero')
+    $ LamAnn
+      ( Pi'
+          Nat'
+          ( Pi'
+              (Inf $ Bound 2 :@: Bound' 0)
+              (Inf $ Bound 3 :@: Inf (Succ (Bound' 1)))
+          )
+      )
+    $ LamAnn Nat'
+    $ NatElim (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
 
 -- >>> typeInfer 0 mempty natElim
 -- Right (Π(x_0 : Π(x_0 : ℕ). *). Π(x_1 : x_0 0). Π(x_2 : Π(x_2 : ℕ). Π(x_3 : x_0 x_2). x_0 (succ x_2)). Π(x_3 : ℕ). x_0 x_3)
 
 vecElim' :: Term 'Inferable
 vecElim' =
-  LamAnn Star' $
-    LamAnn (Pi' Nat' $ Pi' (Vec' (Bound' 1) (Bound' 0)) Star') $
-      LamAnn
-        (Inf $ Bound 0 :@: Zero' :@: Inf (Nil (Bound' 1)))
-        $ LamAnn
-          ( Pi' Nat' $
-              Pi' (Bound' 3) $
-                Pi' (Vec' (Bound' 4) (Bound' 1)) $
-                  Pi' (Inf $ Bound 4 :@: Bound' 2 :@: Bound' 0) $
-                    Inf $
-                      Bound 5
-                        :@: Succ' (Bound' 3)
-                        :@: Cons' (Bound' 6) (Bound' 3) (Bound' 2) (Bound' 1)
-          )
-          $ LamAnn Nat' $
-            LamAnn (Vec' (Bound' 4) (Bound' 0)) $
-              VecElim (Bound' 5) (Bound' 4) (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
+  LamAnn Star'
+    $ LamAnn (Pi' Nat' $ Pi' (Vec' (Bound' 1) (Bound' 0)) Star')
+    $ LamAnn
+      (Inf $ Bound 0 :@: Zero' :@: Inf (Nil (Bound' 1)))
+    $ LamAnn
+      ( Pi' Nat' $
+          Pi' (Bound' 3) $
+            Pi' (Vec' (Bound' 4) (Bound' 1)) $
+              Pi' (Inf $ Bound 4 :@: Bound' 2 :@: Bound' 0) $
+                Inf $
+                  Bound 5
+                    :@: Succ' (Bound' 3)
+                    :@: Cons' (Bound' 6) (Bound' 3) (Bound' 2) (Bound' 1)
+      )
+    $ LamAnn Nat'
+    $ LamAnn (Vec' (Bound' 4) (Bound' 0))
+    $ VecElim (Bound' 5) (Bound' 4) (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
 
 -- >>> typeInfer 0 mempty vecElim'
 -- Right (Π(x_0 : *). Π(x_1 : Π(x_1 : ℕ). Π(x_2 : Vec x_0 x_1). *). Π(x_2 : x_1 0 (nil x_0)). Π(x_3 : Π(x_3 : ℕ). Π(x_4 : x_0). Π(x_5 : Vec x_0 x_3). Π(x_6 : x_1 x_3 x_5). x_1 (succ x_3) (cons x_0 x_3 x_4 x_5)). Π(x_4 : ℕ). Π(x_5 : Vec x_0 x_4). x_1 x_4 x_5)
@@ -618,25 +770,37 @@ cons' :: Term 'Inferable
 cons' =
   LamAnn
     Star'
-    $ LamAnn Nat' $
-      LamAnn (Bound' 1) $
-        LamAnn (Vec' (Bound' 2) (Bound' 1)) $
-          Cons (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
+    $ LamAnn Nat'
+    $ LamAnn (Bound' 1)
+    $ LamAnn (Vec' (Bound' 2) (Bound' 1))
+    $ Cons (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
 
 -- >>> typeInfer 0 mempty cons'
 -- Right (Π(x_0 : *). Π(x_1 : ℕ). Π(x_2 : x_0). Π(x_3 : Vec x_0 x_1). Vec x_0 (succ x_1))
 
-tryInferType :: Term 'Checkable -> Result Type
-tryInferType (Inf te) = typeInfer 0 mempty te
-tryInferType te@Lam {} =
+tryInferTypeWith :: Context -> Term 'Checkable -> Result Type
+tryInferTypeWith ctx (Inf te) = typeInfer 0 ctx te
+tryInferTypeWith _ te@Lam {} =
   Left $
     "A type of a raw lambda cannot be inferred: "
-      ++ prettyChkPrec 0 10 te ""
+      <> prettyChkPrec 0 10 te ""
+tryInferTypeWith ctx (MkRecord flds) = do
+  let dups =
+        sort $
+          map fst $
+            filter ((> 1) . snd) $
+              HM.toList $
+                HM.fromListWith ((+) @Int) $
+                  map (0 <$) flds
+  unless (null dups) $
+    Left $
+      "Following field(s) ocuurred more than once: " <> show flds
+  VRecord . HM.fromList <$> traverse (secondA $ tryInferTypeWith ctx) flds
 
-tryEval :: Term 'Checkable -> Result (Value, Type)
-tryEval e = do
-  !typ <- tryInferType e
-  pure (evalChk mempty e, typ)
+tryEvalWith :: Context -> Env -> Term 'Checkable -> Result (Value, Type)
+tryEvalWith _Γ ctx e = do
+  !typ <- tryInferTypeWith _Γ e
+  pure (evalChk ctx e, typ)
 
 tryEvalAs :: Term 'Checkable -> Term 'Checkable -> Result Value
 tryEvalAs e ty = do

@@ -1,18 +1,29 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module Language.Lambda.Syntax.LambdaPi.Parser where
 
 import Control.Applicative (Alternative (..))
-import Control.Arrow ((+++))
-import Control.Monad (when)
+import Control.Applicative.Combinators (sepBy)
+import qualified Control.Applicative.Combinators.NonEmpty as NE
+import Control.Arrow ((+++), (>>>))
+import Control.Monad (unless, when)
 import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, local)
+import qualified Data.Bifunctor as Bi
 import Data.Char (isAlphaNum, isLetter, isSpace)
+import qualified Data.DList as DL
 import Data.Foldable (asum)
 import Data.Functor (void, (<&>))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as HS
+import qualified Data.IntMap as IntMap
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty.Utils as NE
+import qualified Data.Map as Map
+import Data.Semigroup
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
@@ -40,10 +51,10 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type"]
+keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record"]
 
 isIdentHeadChar :: Char -> Bool
-isIdentHeadChar = isLetter
+isIdentHeadChar ch = isLetter ch || ch == '_'
 
 isIdentBodyChar :: Char -> Bool
 {-# INLINE isIdentBodyChar #-}
@@ -58,7 +69,8 @@ reserved :: Text -> Parser ()
 reserved name =
   lexeme $
     try $
-      void $ string name <* notFollowedBy (satisfy isIdentBodyChar)
+      void $
+        string name <* notFollowedBy (satisfy isIdentBodyChar)
 
 identifier :: Parser Text
 identifier = label "identifier" $
@@ -73,7 +85,7 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
 parens :: Parser a -> Parser a
-parens = between (symbol "(") (symbol ")")
+parens = between (symbol "(" <* notFollowedBy (symbol "|")) (symbol ")")
 
 symbol :: Text -> Parser Text
 symbol = L.symbol space
@@ -92,16 +104,17 @@ varP = do
     Just i -> Bound i
     Nothing -> Free $ Global ident
 
-binder :: Parser [(Text, Term 'Checkable)]
+binder :: Parser (NonEmpty (Text, Term 'Checkable))
 binder =
   parens
-    ( flip (map . flip (,))
-        <$> some identifier
-        <* symbol ":" <*> (termChkP <?> "variable type")
+    ( flip (fmap . flip (,))
+        <$> NE.some identifier
+        <* symbol ":"
+        <*> (termChkP <?> "variable type")
     )
 
-binders :: Parser [(Text, Term 'Checkable)]
-binders = concat <$> some binder
+binders :: Parser (NonEmpty (Text, Term 'Checkable))
+binders = sconcat <$> NE.some binder
 
 lamAnnP :: Parser (Term 'Inferable)
 lamAnnP = label "Typed lambda abstraction" $
@@ -111,11 +124,17 @@ lamAnnP = label "Typed lambda abstraction" $
       bindees <- binders <* symbol "."
       foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) termInfP bindees
 
+unsnocNE :: NonEmpty a -> ([a], a)
+unsnocNE = NE.uncons >>> uncurry (go mempty)
+  where
+    go !acc x Nothing = (DL.toList acc, x)
+    go !acc x (Just (y :| ys)) = go (acc `DL.snoc` x) y (NE.nonEmpty ys)
+
 piP :: Parser (Term 'Inferable)
 piP = label "Pi-binding" $ do
   reserved "Π"
   bindees <- binders <* symbol "."
-  let (half, [(var0, ty0)]) = splitAt (length bindees - 1) bindees
+  let (half, (var0, ty0)) = unsnocNE bindees
   foldr
     (\(var, ty) p -> binding var $ Pi ty . Inf <$> p)
     (binding var0 $ Pi ty0 <$> termChkP)
@@ -127,7 +146,42 @@ eliminatorsP =
     <|> vecElim' <$ reserved "vecElim"
 
 compoundTyConP :: Parser (Term 'Inferable)
-compoundTyConP = vecCon' <$ reserved "Vec"
+compoundTyConP =
+  vecCon' <$ reserved "Vec"
+    <|> variantBracketed
+      ( Variant <$> fieldSeqP "tag" (symbol "|" <* notFollowedBy (symbol ")")) (symbol ":")
+      )
+    <|> try (between (symbol "{") (symbol "}") (Record <$> fieldSeqP "field" (symbol ",") (symbol ":")))
+
+fieldSeqP ::
+  String ->
+  Parser fieldSeparator ->
+  Parser fieldAndTypeSep ->
+  Parser [(Text, Term 'Checkable)]
+fieldSeqP tokenName sep fldSep = do
+  flds <-
+    ( (,)
+        <$> (identifier <?> tokenName)
+        <* fldSep
+        <*> termChkP
+      )
+      `sepBy` try sep
+  let dups =
+        map fst $
+          filter ((> 1) . snd) $
+            Map.toList $
+              Map.fromListWith (+) $
+                map (Bi.second $ const (1 :: Int)) flds
+  unless (null dups) $
+    fail $
+      "Following field(s) occurred more than once: "
+        <> show dups
+  pure flds
+
+variantBracketed :: Parser a -> Parser a
+variantBracketed p =
+  try (symbol "(" *> symbol "|" *> p <* try (symbol "|" *> symbol ")"))
+    <|> symbol "⦇" *> p <* symbol "⦈"
 
 datConP :: Parser (Term 'Inferable)
 datConP =
@@ -147,7 +201,7 @@ appP =
 termInfP :: Parser (Term 'Inferable)
 termInfP = termInfPrecP 0
 
-naturalP :: ReaderT VarMap (Parsec Void Text) (Term 'Inferable)
+naturalP :: Parser (Term 'Inferable)
 naturalP =
   lexeme decimal <&> \n ->
     foldr ($) Zero (replicate n (Succ . Inf))
@@ -155,11 +209,12 @@ naturalP =
 termInfPrecP :: Int -> Parser (Term 'Inferable)
 termInfPrecP 0 =
   -- Processes Pi-constructs and annotated lambdas
-  piP <|> lamAnnP
+  piP
+    <|> lamAnnP
     <|> (handleTrailingArrow =<< termInfPrecP 1)
   where
     handleTrailingArrow t =
-      try (Pi (Inf t) <$ symbol "->" <*> anonymousBind (termChkPrecP 0))
+      try (Pi (Inf t) <$ (symbol "->" <|> symbol "→") <*> anonymousBind (termChkPrecP 0))
         <|> pure t
 termInfPrecP 1 =
   -- Processes type annotations
@@ -179,6 +234,14 @@ termInfPrecP _ =
     <|> varP
     <|> parens (termInfPrecP 0)
 
+fieldProjP :: Parser (Term 'Inferable)
+fieldProjP =
+  try $
+    (:#:)
+      <$> termInfPrecP 4
+      <* symbol "#"
+      <*> (identifier <?> "field")
+
 parseSig :: Term 'Checkable -> Parser (Term 'Inferable)
 parseSig e =
   (e :::) <$ symbol ":" <*> termChkPrecP 0
@@ -191,7 +254,18 @@ termChkPrecP d =
 termChkP :: Parser (Term 'Checkable)
 termChkP =
   label "checkable terms" $
-    try (parens unAnnLamP) <|> unAnnLamP <|> Inf <$> termInfP
+    try (parens unAnnLamP)
+      <|> unAnnLamP
+      <|> Inf <$> termInfP
+      <|> recordChkP
+
+recordChkP :: Parser (Term 'Checkable)
+recordChkP =
+  reserved "record"
+    *> between
+      (symbol "{")
+      (symbol "}")
+      (MkRecord <$> fieldSeqP "field" (symbol ",") (symbol "="))
 
 unAnnLamP :: Parser (Term 'Checkable)
 unAnnLamP = label "Unannotated lambda" $
@@ -221,5 +295,5 @@ parseNamed name p = (errorBundlePretty +++ id) . runParser (runReaderT p mempty)
 lambdaExp :: Parser (Term 'Checkable)
 lambdaExp = space *> termChkP <* eof
 
--- >>> either error tryEval $ parseOnly (lambdaExp) "(λ(n : Nat). natElim (λ x. Nat) n (λ z. succ : Nat -> Nat : *)) 2 40"
--- Right (42,ℕ)
+-- >>> parseOnly lambdaExp "(λ n. n) : Nat -> Nat"
+-- Left "<input>:1:10:\n  |\n1 | (\955 n. n) : Nat -> Nat\n  |          ^\nunexpected ':'\nexpecting end of input\n"
