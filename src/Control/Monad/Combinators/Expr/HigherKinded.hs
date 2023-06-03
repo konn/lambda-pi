@@ -10,7 +10,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Control.Monad.Combinators.Expr.Parametrised (
+module Control.Monad.Combinators.Expr.HigherKinded (
   HOperator (..),
   makeHExprParser,
   Compose (..),

@@ -25,7 +25,7 @@ source-repository head
 
 library
   exposed-modules:
-      Control.Monad.Combinators.Expr.Parametrised
+      Control.Monad.Combinators.Expr.HigherKinded
       Data.Bifunctor.Utils
       Data.List.NonEmpty.Utils
       Language.Lambda.Syntax.LambdaPi
