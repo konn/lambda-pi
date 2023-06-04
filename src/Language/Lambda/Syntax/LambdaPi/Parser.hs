@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -14,25 +13,25 @@ import Control.Monad (unless, when)
 import Control.Monad.Combinators.Expr.HigherKinded
 import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, local)
 import qualified Data.Bifunctor as Bi
-import Data.Char (isAlphaNum, isLetter)
+import Data.Bifunctor.Biff (Biff (..))
+import Data.Char (isAlpha, isAlphaNum, isSymbol)
 import qualified Data.Dependent.Map as DMap
 import Data.Functor (void, (<&>))
-import Data.Functor.Apply
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
+import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty.Utils as NE
 import qualified Data.Map as Map
 import Data.Semigroup
-import Data.Semigroup.Foldable (asum1)
 import qualified Data.Set as Set
 import Data.Some (Some (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import Language.Lambda.Syntax.LambdaPi
-import Text.Megaparsec (Parsec, between, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhileP, try, (<?>))
+import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -45,50 +44,95 @@ operators :: [[HOperator SMode Parser Term]]
 operators =
   [
     [ infixR theMode theMode theMode $
-        (:::) <$ reserved ":"
+        (:::) <$ symbol ":"
     ]
   ,
     [ InfixR theMode theMode theMode $
-        ( \l p ->
-            Pi l <$> anonymousBind p
-        )
-          <$ (reserved "->" <|> reserved "→")
+        (~>) <$ (reservedOp "->" <|> reservedOp "→")
     ]
     {- ,
       [ infixL theMode theMode theMode $
-          (:@:) <$ appSpaceP
+          (:@:) <$ try appSpaceP
       ] -}
   ]
 
+(~>) ::
+  Term 'Checkable ->
+  Parser (Term 'Checkable) ->
+  Parser (Term 'Inferable)
+(~>) l p = Pi l <$> anonymousBind p
+
+-- >>> parseOnly (parserOf SInferable exprParsers ) "Nat -> Nat"
+-- Right (Pi (Inf Nat) (Inf Nat))
+
+-- >>> parseOnly (parserOf SCheckable exprParsers ) "Nat -> Nat"
+-- Left "<input>:1:5:\n  |\n1 | Nat -> Nat\n  |     ^\nunexpected '-'\nexpecting end of input\n"
+
+-- >>> parseOnly (parserOf SCheckable exprParsers ) "(Nat -> Nat)"
+-- Right (Inf (Pi (Inf Nat) (Inf Nat)))
+
+-- >>> parseOnly (parserOf SInferable exprParsers ) "(λ x. x) -> Nat"
+-- Right (Pi (Inf Nat) (Inf Nat))
+
+-- >>> parseOnly (parserOf SCheckable exprParsers) "Nat"
+-- Right (Inf Nat)
+
+-- >>> parseOnly (parserOf SInferable basicTermParsers) "(Nat : Type)"
+-- Right (Inf Nat ::: Inf Star)
+
+-- >>> parseOnly (parserOf SInferable basicTermParsers) "Nat : Type"
+-- Left "<input>:1:5:\n  |\n1 | Nat : Type\n  |     ^\nunexpected ':'\nexpecting end of input\n"
+
+-- >>> parseOnly (parserOf SInferable exprParsers) "Nat : Type"
+-- Right (Inf Nat ::: Inf Star)
+
+-- >>> parseOnly (parserOf SCheckable exprParsers) "Nat : Type"
+-- Left "<input>:1:5:\n  |\n1 | Nat : Type\n  |     ^\nunexpected ':'\nexpecting end of input\n"
+
+-- >>> parseOnly (parserOf SCheckable exprParsers) "(Nat : Type)"
+-- Right (Inf (Inf Nat ::: Inf Star))
+
+-- >>> parseOnly (parserOf SCheckable basicTermParsers) "Nat"
+
+-- >>> parseOnly (parserOf SCheckable basicTermParsers) "Type"
+
 appSpaceP :: Parser ()
 appSpaceP =
-  notFollowedBy (unwrapApplicative $ asum1 $ NE.map (WrapApplicative . symbol) opNames)
+  space <* notFollowedBy (satisfy isOperatorSymbol)
 
-opNames :: NonEmpty Text
-opNames = NE.fromList ["->", "→", ":", "#"]
+reservedOpNames :: HashSet Text
+reservedOpNames = HS.fromList ["->", "→", ":", "#"]
 
 exprParsers :: ParserDict SMode Parser Term
 exprParsers =
-  makeHExprParser (Set.fromList [Some SInferable, Some SCheckable]) basicTermParsers operators
+  makeHExprParser
+    (Set.fromList [Some SInferable, Some SCheckable])
+    (DMap.singleton SInferable (Compose (DMap.singleton SCheckable $ Biff Inf)))
+    basicTermParsers
+    operators
 
 basicTermParsers :: ParserDict SMode Parser Term
 basicTermParsers =
   DMap.fromList
     [ SInferable
-        ~=> piP
+        ~=> ( atomicInfTerms
+                <|> parens (parserOf SInferable exprParsers)
+            )
+    , SCheckable
+        ~=> ( try unAnnLamP
+                <|> try recordChkP
+                <|> parens (parserOf SCheckable exprParsers)
+            )
+    ]
+  where
+    atomicInfTerms =
+      piP
         <|> try lamAnnP
         <|> primTypeP
         <|> compoundTyConP
         <|> datConP
         <|> eliminatorsP
         <|> varP
-        <|> parens (parserOf SInferable exprParsers)
-    , SCheckable
-        ~=> try unAnnLamP
-        <|> try recordChkP
-        <|> try (Inf <$> parserOf theMode basicTermParsers)
-        <|> parens (parserOf SCheckable exprParsers)
-    ]
 
 binding :: Text -> Parser a -> Parser a
 binding v = local (HM.insert v 0 . HM.map succ)
@@ -104,14 +148,14 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "->", "→", ":"]
+keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record"]
 
 isIdentHeadChar :: Char -> Bool
-isIdentHeadChar ch = isLetter ch || ch == '_'
+isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'
 
 isIdentBodyChar :: Char -> Bool
 {-# INLINE isIdentBodyChar #-}
-isIdentBodyChar ch = ch == '_' || ch == '-' || isAlphaNum ch
+isIdentBodyChar ch = ch == '_' || isAlphaNum ch
 
 identifierLike :: Parser Text
 identifierLike =
@@ -127,12 +171,34 @@ reserved name =
 
 identifier :: Parser Text
 identifier = label "identifier" $
+  try $ do
+    ident <- identifierLike
+    when (ident `HS.member` keywords) $ do
+      fail $ "Identifier expected, but got keyword: " <> T.unpack ident
+    pure ident
+
+operatorLike :: Parser Text
+operatorLike =
   lexeme $
-    try $ do
-      ident <- identifierLike
-      when (ident `HS.member` keywords) $ do
-        fail $ "Identifier expected, but got keyword: " <> T.unpack ident
-      pure ident
+    T.pack <$> some (satisfy isOperatorSymbol)
+
+isOperatorSymbol :: Char -> Bool
+isOperatorSymbol c =
+  isSymbol c && not (c `HS.member` HS.fromList "★")
+    || c `HS.member` HS.fromList "*/-_><+#:?!."
+
+reservedOp :: Text -> Parser ()
+reservedOp name =
+  void $ lexeme $ string name <* notFollowedBy (satisfy isOperatorSymbol)
+
+operator :: Parser Text
+operator = label "operator" $
+  try $ do
+    name <- operatorLike
+    when (name `HS.member` reservedOpNames) $
+      fail $
+        "Reserved operator name found: " <> T.unpack name
+    pure name
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
@@ -146,7 +212,7 @@ symbol = L.symbol space
 primTypeP :: Parser (Term 'Inferable)
 primTypeP =
   label "Primitive type" $
-    Star <$ (reserved "*" <|> reserved "Type" <|> reserved "★")
+    Star <$ (reserved "Type" <|> reserved "★")
       <|> Nat <$ (reserved "ℕ" <|> reserved "Nat")
 
 varP :: Parser (Term 'Inferable)
@@ -272,7 +338,7 @@ parseOnly ::
   Parser a ->
   Text ->
   Either String a
-parseOnly = parseNamed "<input>"
+parseOnly = parseNamed "<input>" . (<* eof) . (space *>)
 
 parseNamed ::
   String ->

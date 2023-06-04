@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -17,6 +18,7 @@ module Control.Monad.Combinators.Expr.HigherKinded (
   infixR,
   makeHExprParser,
   ParserDict,
+  CastFunctions,
   Compose (..),
   (~=>),
   parserOf,
@@ -27,7 +29,7 @@ import Control.Applicative.Combinators
 import Control.Arrow ((>>>))
 import Control.Lens
 import Control.Monad
-import Data.Bifunctor.Flip (Flip (..))
+import Data.Bifunctor.Biff (Biff)
 import Data.DList.DNonEmpty (DNonEmpty)
 import Data.DList.DNonEmpty qualified as DLNE
 import Data.Dependent.Map (DMap)
@@ -35,15 +37,17 @@ import Data.Dependent.Map qualified as DMap
 import Data.Dependent.Sum
 import Data.Foldable
 import Data.Functor.Compose (Compose (..))
-import Data.GADT.Compare (GCompare, geq)
+import Data.Functor.Product (Product (..))
+import Data.GADT.Compare (GCompare, GEq, geq)
 import Data.GADT.Show
 import Data.Kind (Type)
+import Data.List (sortOn)
 import Data.Monoid (Alt (..))
 import Data.Semigroup.Foldable (foldMap1)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Some
-import Debug.Trace qualified as DT
+import Text.Megaparsec (MonadParsec (..))
 
 type HOperator :: forall {k}. (k -> Type) -> (Type -> Type) -> (k -> Type) -> Type
 data HOperator k m f where
@@ -52,31 +56,27 @@ data HOperator k m f where
     , InfixR ::
     k l -> k r -> k v -> m (f l -> m (f r) -> m (f v)) -> HOperator k m f
 
+type CastFunctions k f = DMap k (Compose (DMap k) (Biff (->) f f))
+
 makeHExprParser ::
-  (MonadPlus m, GCompare k, MonadFail m, GShow k) =>
+  (MonadPlus m, GCompare k, MonadFail m, GShow k, MonadParsec e s m) =>
   Set (Some k) ->
+  CastFunctions k f ->
   ParserDict k m f ->
   [[HOperator k m f]] ->
   ParserDict k m f
-makeHExprParser vs = foldl' (addPrecLevel vs)
+makeHExprParser vs casts = foldl' (addPrecLevel vs casts)
 
 data HOpInOut k m f l v where
   HInfixLike :: k r -> m (f l -> m (f r) -> m (f v)) -> HOpInOut k m f l v
 
-asumDMapWithKey :: Alternative g => (forall v. k v -> f v -> g a) -> DMap k f -> g a
-asumDMapWithKey f = getAlt . getConst . DMap.traverseWithKey (fmap (Const . Alt) . f)
-
-dsumParsers :: Alternative m => ParserDict t m f -> m (DSum t f)
-dsumParsers = asumDMapWithKey $ \tv (Compose p) ->
-  (tv :=>) <$> p
-
 newtype InfixInOutDic k m f
   = InfixInOutDic
-      (DMap k (Compose (Compose (DMap k) (Compose DNonEmpty)) (Flip (HOpInOut k m f))))
+      (DMap k (Compose (Compose (DMap k) (Compose DNonEmpty)) (HOpInOut k m f)))
 
 singletonInfixInOutDic :: k l -> k v -> HOpInOut k m f l v -> InfixInOutDic k m f
 singletonInfixInOutDic frm dst =
-  InfixInOutDic . DMap.singleton dst . Compose . Compose . DMap.singleton frm . Compose . DLNE.singleton . Flip
+  InfixInOutDic . DMap.singleton frm . Compose . Compose . DMap.singleton dst . Compose . DLNE.singleton
 
 instance GCompare k => Semigroup (InfixInOutDic k m f) where
   InfixInOutDic l <> InfixInOutDic r =
@@ -112,36 +112,48 @@ instance GCompare k => Monoid (InfixLDic k m f) where
 
 type ParserDict k m f = DMap k (Compose m f)
 
-infixr 1 ~=>
+infixr 1 ~=>, :~=>
 
 (~=>) :: k a -> f (g a) -> DSum k (Compose f g)
 l ~=> r = l :=> Compose r
 
+{-# COMPLETE (:~=>) #-}
+
+pattern (:~=>) :: k a -> f (g a) -> DSum k (Compose f g)
+pattern l :~=> r = l :=> Compose r
+
+asumMapAtLast ::
+  (MonadParsec e s m, GCompare k) =>
+  CastFunctions k f ->
+  k v ->
+  ParserDict k m f ->
+  (forall z. k z -> f z -> m (f v)) ->
+  m (f v)
+asumMapAtLast casters tv terms f = do
+  flip (alaf Alt foldMap) (sortOn (weightSome tv) $ DMap.toList terms) $
+    \(kx :~=> pfx) -> try $
+      case geq kx tv of
+        Just Refl -> do
+          fx <- pfx
+          try (f kx fx) <|> pure fx
+        Nothing -> try . f kx =<< pfx
+
 addPrecLevel ::
-  forall k m f.
-  (GCompare k, MonadPlus m, MonadFail m, GShow k) =>
+  forall k m f e s.
+  (GCompare k, MonadFail m, GShow k, MonadParsec e s m) =>
   Set (Some k) ->
+  CastFunctions k f ->
   ParserDict k m f ->
   [HOperator k m f] ->
   ParserDict k m f
-addPrecLevel targs terms ops =
-  DMap.fromList $
-    map (\(Some t) -> t ~=> go t) $
-      Set.toList targs
+addPrecLevel targs casters terms ops =
+  DMap.fromList $ map (\(Some t) -> t ~=> go t) $ Set.toList targs
   where
-    someTerm = dsumParsers terms
     go :: forall v. k v -> m (f v)
-    go tv = do
-      tx :=> fx <- ((tv :=>) <$> parserOf tv terms) <|> someTerm
-      let withFallback p =
-            case geq tv tx of
-              Just Refl -> p <|> pure fx
-              Nothing -> p
-
-      withFallback $
-        parseFixR terms fixR tx tv fx
-          <|> parseFixL terms fixL tx tv fx
-          <|> parseFixN terms fixN tx tv fx
+    go tv = asumMapAtLast casters tv terms $ \tx fx ->
+      parseFixR casters terms fixR tx tv fx
+        <|> parseFixL terms fixL tx tv fx
+        <|> parseFixN terms fixN tx tv fx
 
     (fixN, fixL, fixR) =
       foldMap
@@ -164,6 +176,12 @@ addPrecLevel targs terms ops =
         )
         ops
 
+weightSome :: GEq k => k v -> DSum k f -> (Int, Some k)
+weightSome kv (ku :=> _) =
+  case geq kv ku of
+    Just Refl -> (100, Some ku)
+    Nothing -> (0, Some ku)
+
 parserOf ::
   (GCompare k, Alternative m, MonadFail m, GShow k) =>
   k x ->
@@ -172,7 +190,7 @@ parserOf ::
 parserOf tv = maybe (fail $ "Parser not found for: " <> gshow tv) getCompose . DMap.lookup tv
 
 parseFixN ::
-  (GCompare k, MonadPlus m, MonadFail m, GShow k) =>
+  (GCompare k, MonadParsec e s m, MonadFail m, GShow k) =>
   ParserDict k m f ->
   InfixInOutDic k m f ->
   k from ->
@@ -184,7 +202,7 @@ parseFixN terms (InfixInOutDic ndic) frm dst x =
    in maybe
         ( fail $
             "parseFixN: outer key `"
-              <> gshow dst
+              <> gshow frm
               <> "' not found in: "
               <> show (DMap.keys fixN)
               <> "; all term parsers: "
@@ -194,7 +212,7 @@ parseFixN terms (InfixInOutDic ndic) frm dst x =
             maybe
               ( fail $
                   "parseFixN: inner key `"
-                    <> gshow frm
+                    <> gshow dst
                     <> "' not found in: "
                     <> show (DMap.keys dic)
                     <> "; all term parsers: "
@@ -204,19 +222,19 @@ parseFixN terms (InfixInOutDic ndic) frm dst x =
                   alaf
                     Alt
                     foldMap1
-                    ( \(Flip (HInfixLike tr p)) -> do
+                    ( \(HInfixLike tr p) -> try $ do
                         f <- p
                         f x $ parserOf tr terms
                     )
                     ents
               )
-              $ DMap.lookup frm dic
+              $ DMap.lookup dst dic
         )
-        $ DMap.lookup dst fixN
+        $ DMap.lookup frm fixN
 
 parseFixL ::
-  forall k m f from to.
-  (GCompare k, MonadPlus m, MonadFail m, GShow k) =>
+  forall k m f from to e s.
+  (GCompare k, MonadParsec e s m, MonadFail m, GShow k) =>
   ParserDict k m f ->
   InfixLDic k m f ->
   k from ->
@@ -241,7 +259,7 @@ parseFixL terms (InfixLDic ldic) = goL
             >>> alaf
               Alt
               foldMap1
-              ( getCompose >>> \(kret :=> HInfixLike tr p) -> do
+              ( getCompose >>> \(kret :=> HInfixLike tr p) -> try $ do
                   f <- p
                   !z <- f x $ parserOf tr terms
                   let
@@ -254,24 +272,24 @@ parseFixL terms (InfixLDic ldic) = goL
         $ DMap.lookup frm fixL
 
 parseFixR ::
-  forall k m f from to.
-  (GCompare k, MonadPlus m, MonadFail m, GShow k) =>
+  forall k m f from to e s.
+  (GCompare k, MonadParsec e s m, MonadFail m, GShow k) =>
+  CastFunctions k f ->
   ParserDict k m f ->
   InfixInOutDic k m f ->
   k from ->
   k to ->
   f from ->
   m (f to)
-parseFixR terms (InfixInOutDic rdic) = goR
+parseFixR casters terms (InfixInOutDic rdic) = goR
   where
     fixR = DMap.mapWithKey (const $ _Wrapped . _Wrapped %~ DMap.mapWithKey (const $ _Wrapped %~ DLNE.toNonEmpty)) rdic
-    someTerm = dsumParsers terms
     goR :: k x -> k y -> f x -> m (f y)
-    goR frm dst x =
+    goR !frm !dst !x =
       maybe
         ( fail $
             "parseFixR: outer key `"
-              <> gshow dst
+              <> gshow frm
               <> "' not found in: "
               <> show (DMap.keys fixR)
               <> "; all term parsers: "
@@ -281,7 +299,7 @@ parseFixR terms (InfixInOutDic rdic) = goR
             maybe
               ( fail $
                   "parseFixN: inner key `"
-                    <> gshow frm
+                    <> gshow dst
                     <> "' not found in: "
                     <> show (DMap.keys dic)
                     <> "; all term parsers: "
@@ -291,21 +309,16 @@ parseFixR terms (InfixInOutDic rdic) = goR
                   alaf
                     Alt
                     foldMap1
-                    ( \(Flip (HInfixLike tr p)) -> do
+                    ( \(HInfixLike tr p) -> try $ do
                         f <- p
-
-                        f x $ do
-                          ky :=> !fy <- someTerm
-                          let defY q = case geq ky tr of
-                                Just Refl -> q <|> pure fy
-                                Nothing -> q
-                          defY $ goR ky tr fy
+                        f x $ asumMapAtLast casters tr terms $ \ky !fy -> do
+                          goR ky tr fy
                     )
                     ents
               )
-              $ DMap.lookup frm dic
+              $ DMap.lookup dst dic
         )
-        $ DMap.lookup dst fixR
+        $ DMap.lookup frm fixR
 
 infixN
   , infixL

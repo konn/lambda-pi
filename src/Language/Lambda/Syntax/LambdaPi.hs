@@ -565,7 +565,7 @@ prettyInfPrec :: Level -> Int -> Term 'Inferable -> ShowS
 prettyInfPrec lvl _ (te ::: te') =
   showParen True $
     prettyChkPrec lvl 11 te . showString " :: " . prettyChkPrec lvl 10 te'
-prettyInfPrec _ _ Star = showString "*"
+prettyInfPrec _ _ Star = showString "Type"
 prettyInfPrec lvl d (LamAnn te te') =
   showParen (d > 4) $
     showString "λ(x_"

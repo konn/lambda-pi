@@ -14,7 +14,6 @@ module Language.Lambda.Syntax.LambdaPi.REPL where
 import Control.Exception (Exception)
 import Control.Lens (At (at), use, (.=), (.~), (<<?=))
 import Control.Monad (when)
-import Control.Monad.Combinators.Expr.HigherKinded
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.Generics.Labels ()
@@ -88,8 +87,8 @@ evalM ::
 evalM src (Inf trm) = do
   (val, typ) <- inferEvalM trm
   logInfo $ display src
-  logInfo $ "\t= " <> displayShow val
-  logInfo $ "\t: " <> displayShow typ
+  logInfo $ "  = " <> displayShow val
+  logInfo $ "  : " <> displayShow typ
 evalM src recd@MkRecord {} = do
   ctx <- evalContextM
   _Γ <- typingContextM
@@ -97,8 +96,8 @@ evalM src recd@MkRecord {} = do
     Left err -> throwM $ TypeError err
     Right (val, typ) -> do
       logInfo $ display src
-      logInfo $ "\t= " <> displayShow val
-      logInfo $ "\t: " <> displayShow typ
+      logInfo $ "  = " <> displayShow val
+      logInfo $ "  : " <> displayShow typ
 evalM src Lam {} = do
   throwM $ CouldNotInfer src
 
