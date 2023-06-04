@@ -11,18 +11,17 @@ import Test.Tasty.HUnit
 
 inferableCases :: [(String, Term 'Inferable)]
 inferableCases =
-  [ ("Nat -> Nat", Pi (Inf Nat) $ Inf Nat)
+  [ ("Nat", Nat)
+  , ("(Nat)", Nat)
+  , ("((Nat))", Nat)
+  , ("Nat -> Nat", Pi (Inf Nat) $ Inf Nat)
   , ("(Nat -> Nat)", Pi (Inf Nat) $ Inf Nat)
-  , ("Nat", Nat)
   , ("Nat -> Nat -> Nat", Pi (Inf Nat) $ Inf $ Pi (Inf Nat) (Inf Nat))
   , ("Nat -> (Nat -> Nat)", Pi (Inf Nat) $ Inf $ Pi (Inf Nat) (Inf Nat))
   , ("(Nat -> Nat -> Nat)", Pi (Inf Nat) $ Inf $ Pi (Inf Nat) (Inf Nat))
   , ("(Nat -> (Nat -> Nat))", Pi (Inf Nat) $ Inf $ Pi (Inf Nat) (Inf Nat))
   , ("(Nat -> Nat) -> Nat", Pi (Inf $ Pi (Inf Nat) (Inf Nat)) $ Inf Nat)
   , ("((Nat -> Nat) -> Nat)", Pi (Inf $ Pi (Inf Nat) (Inf Nat)) $ Inf Nat)
-  , ("Nat", Nat)
-  , ("(Nat)", Nat)
-  , ("((Nat))", Nat)
   ]
 
 test_checkableExprP :: TestTree
