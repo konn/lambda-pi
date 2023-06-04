@@ -16,6 +16,7 @@ import qualified Data.Bifunctor as Bi
 import Data.Bifunctor.Biff (Biff (..))
 import Data.Char (isAlpha, isAlphaNum, isSymbol)
 import qualified Data.Dependent.Map as DMap
+import Data.Foldable (foldl')
 import Data.Functor (void, (<&>))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -31,7 +32,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import Language.Lambda.Syntax.LambdaPi
-import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhileP, try, (<?>))
+import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, optional, runParser, satisfy, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -49,10 +50,6 @@ operators =
   ,
     [ InfixR theMode theMode theMode $
         (~>) <$ (reservedOp "->" <|> reservedOp "→")
-    ]
-  ,
-    [ infixL theMode theMode theMode $
-        (:@:) <$ try appSpaceP
     ]
   ]
 
@@ -88,8 +85,7 @@ Right (Inf (Inf Nat ::: Inf Star))
 Right (Inf (Inf Nat ::: Inf Star))
 -}
 appSpaceP :: Parser ()
-appSpaceP =
-  space <* notFollowedBy (satisfy isOperatorSymbol)
+appSpaceP = notFollowedBy (satisfy isOperatorSymbol)
 
 reservedOpNames :: HashSet Text
 reservedOpNames = HS.fromList ["->", "→", ":", "#"]
@@ -115,7 +111,7 @@ basicTermParsers :: ParserDict SMode Parser Term
 basicTermParsers =
   DMap.fromList
     [ SInferable
-        ~=> ( atomicInfTerms <|> parens inferableExprP
+        ~=> ( appsIP <|> parens inferableExprP
             )
     , SCheckable
         ~=> ( try unAnnLamP
@@ -124,13 +120,17 @@ basicTermParsers =
             )
     ]
   where
+    appsIP = do
+      hd <- atomicInfTerms
+      tls <- optional $ checkableExprP `NE.sepBy1` space
+      pure $ maybe hd (foldl' (:@:) hd) tls
     atomicInfTerms =
       piP
-        <|> try lamAnnP
         <|> primTypeP
         <|> compoundTyConP
         <|> datConP
         <|> eliminatorsP
+        <|> try lamAnnP
         <|> varP
 
 binding :: Text -> Parser a -> Parser a

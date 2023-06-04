@@ -131,7 +131,8 @@ asumMapAtLast ::
   (forall z. k z -> f z -> m (f v)) ->
   m (f v)
 asumMapAtLast casters kv terms f = do
-  -- FIXME: Can we do this more efficiently (i.e. w/o singleton comparison or re-parsing)?
+  -- FIXME: Can we do this more efficiently?
+  --  i.e. w/o singleton comparison or re-parsing?
 
   let simples, compounds :: m (f v)
       (Alt compounds, Alt simples) =
@@ -173,7 +174,7 @@ addPrecLevel targs casters terms ops =
         <|> parseFixN casters terms fixN tx tv fx
 
     (fixN, fixL, fixR) =
-      foldMap
+      foldMap'
         ( \case
             InfixN l r v p ->
               ( singletonInfixInOutDic l v $ HInfixLike r p

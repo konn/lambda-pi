@@ -63,4 +63,4 @@ main = do
     mainLoop = withInterrupt $ handleInterrupt mainLoop $ do
       whileJust_ (getInputLine ">>> ") $ \inp ->
         handleInterrupt (outputStrLn "Interrupted.") $ do
-          lift $ readEvalPrintM $ T.pack inp
+          lift $ evaluateDeep =<< readEvalPrintM (T.pack inp)
