@@ -22,6 +22,13 @@ inferableCases =
   , ("(Nat -> (Nat -> Nat))", Pi (Inf Nat) $ Inf $ Pi (Inf Nat) (Inf Nat))
   , ("(Nat -> Nat) -> Nat", Pi (Inf $ Pi (Inf Nat) (Inf Nat)) $ Inf Nat)
   , ("((Nat -> Nat) -> Nat)", Pi (Inf $ Pi (Inf Nat) (Inf Nat)) $ Inf Nat)
+  , ("natElim", LamAnn (Inf (Pi (Inf Nat) (Inf Star))) (LamAnn (Inf (Bound 0 :@: Inf Zero)) (LamAnn (Inf (Pi (Inf Nat) (Inf (Pi (Inf (Bound 2 :@: Inf (Bound 0))) (Inf (Bound 3 :@: Inf (Succ (Inf (Bound 1))))))))) (LamAnn (Inf Nat) (NatElim (Inf (Bound 3)) (Inf (Bound 2)) (Inf (Bound 1)) (Inf (Bound 0)))))))
+  ]
+
+checkableCases :: [(String, Term 'Checkable)]
+checkableCases =
+  [ ("λ x. x", Lam $ Inf $ Bound 0)
+  , ("(λ x. x)", Lam $ Inf $ Bound 0)
   ]
 
 test_checkableExprP :: TestTree
@@ -32,7 +39,7 @@ test_checkableExprP =
         "Regression Test"
         [ testCase src $
           parseOnly checkableExprP (T.pack src) @?= Right expect
-        | (src, expect) <- map (Bi.second Inf) inferableCases
+        | (src, expect) <- map (Bi.second Inf) inferableCases <> checkableCases
         ]
     ]
 
