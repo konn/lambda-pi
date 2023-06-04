@@ -31,7 +31,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import Language.Lambda.Syntax.LambdaPi
-import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhileP, try, (<?>))
+import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhile1P, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -177,7 +177,7 @@ identifier = label "identifier" $
 operatorLike :: Parser Text
 operatorLike =
   lexeme $
-    T.pack <$> some (satisfy isOperatorSymbol)
+    takeWhile1P (Just "operator symbol") isOperatorSymbol
 
 isOperatorSymbol :: Char -> Bool
 isOperatorSymbol c =
