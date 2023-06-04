@@ -284,7 +284,7 @@ parseFixL casters terms (InfixLDic ldic) = goL
       maybe
         ( fail $
             "parseFixL: key `"
-              <> gshow dst
+              <> gshow frm
               <> "' not found in: "
               <> show (DMap.keys fixL)
               <> "; all term parsers: "
