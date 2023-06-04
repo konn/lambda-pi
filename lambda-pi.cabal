@@ -50,15 +50,19 @@ library
     , diagnose
     , dlist
     , equational-reasoning
+    , fmlist
     , generic-lens
     , ghc-typelits-presburger
     , hashable
+    , haskeline
     , lens
     , megaparsec
+    , monad-loops
     , mtl
     , parser-combinators
     , parsers
     , rio
+    , rio-orphans
     , semigroupoids
     , semigroups
     , some
@@ -90,16 +94,20 @@ executable lambda-pi-exe
     , diagnose
     , dlist
     , equational-reasoning
+    , fmlist
     , generic-lens
     , ghc-typelits-presburger
     , hashable
+    , haskeline
     , lambda-pi
     , lens
     , megaparsec
+    , monad-loops
     , mtl
     , parser-combinators
     , parsers
     , rio
+    , rio-orphans
     , semigroupoids
     , semigroups
     , some
