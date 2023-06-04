@@ -21,17 +21,6 @@ jobs:
         restore-keys: |
           ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-
           ubuntu-9.2.7-cabal-store-
-    - run: cabal update
-    - name: Build dependencies
-      run: |
-        cabal build --only-dependencies
-
-    - name: Save ~/.cabal/store
-      uses: actions/cache/save@v3
-      with:
-        path: ~/.cabal/store
-        key: |
-          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
 
     - name: Restore ./dist-newstyle
       uses: actions/cache/restore@v3
@@ -44,9 +33,22 @@ jobs:
           ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-
           ubuntu-9.2.7-dist-newstyle-
     
+    - run: cabal update
+    - name: Build dependencies
+      run: |
+        cabal build --only-dependencies --enable-tests --enable-benchmarks
+
+    - name: Save ~/.cabal/store
+      uses: actions/cache/save@v3
+      with:
+        path: ~/.cabal/store
+        key: |
+          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
+
     - name: Build All
       id: build
       run: cabal build --enable-tests --enable-benchmarks
+
     - name: Save ./dist-newstyle
       if: ${{ steps.build.conclusion == 'success' }}
       uses: actions/cache/save@v3
@@ -54,6 +56,7 @@ jobs:
         path: dist-newstyle
         key: |
           ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
+
     - name: Collect binaries
       shell: bash
       run: |
@@ -68,6 +71,7 @@ jobs:
             cp "${TARGET}" artifacts/
         done
         tar -caf artifacts.tar.zst artifacts/
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v3
       with:
