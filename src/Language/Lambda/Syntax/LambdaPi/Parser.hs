@@ -62,10 +62,10 @@ operators =
   Parser (Term 'Inferable)
 (~>) l p = Pi l <$> anonymousBind p
 
--- >>> parseOnly (parserOf SInferable exprParsers ) "Nat -> Nat"
--- Right (Pi (Inf Nat) (Inf Nat))
+-- >>> parseOnly (parserOf SInferable exprParsers) "Nat -> Nat"
+-- Left "<input>:1:5:\n  |\n1 | Nat -> Nat\n  |     ^\nunexpected '-'\nexpecting end of input\n"
 
--- >>> parseOnly (parserOf SCheckable exprParsers ) "Nat -> Nat"
+-- >>> parseOnly (parserOf SCheckable exprParsers) "Nat -> Nat"
 -- Left "<input>:1:5:\n  |\n1 | Nat -> Nat\n  |     ^\nunexpected '-'\nexpecting end of input\n"
 
 -- >>> parseOnly (parserOf SCheckable exprParsers ) "(Nat -> Nat)"
