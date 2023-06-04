@@ -118,7 +118,7 @@ basicTermParsers =
         ~=> ( atomicInfTerms <|> parens inferableExprP
             )
     , SCheckable
-        ~=> ( unAnnLamP
+        ~=> ( try unAnnLamP
                 <|> recordChkP
                 <|> parens checkableExprP
             )
@@ -126,7 +126,7 @@ basicTermParsers =
   where
     atomicInfTerms =
       piP
-        <|> lamAnnP
+        <|> try lamAnnP
         <|> primTypeP
         <|> compoundTyConP
         <|> datConP
@@ -234,7 +234,7 @@ binders :: Parser (NonEmpty (Text, Term 'Checkable))
 binders = sconcat <$> NE.some binder
 
 lamAnnP :: Parser (Term 'Inferable)
-lamAnnP = label "Typed lambda abstraction" $ try $ do
+lamAnnP = label "Typed lambda abstraction" $ do
   reserved "λ"
   bindees <- binders <* symbol "."
   foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) inferableExprP bindees
@@ -258,7 +258,7 @@ compoundTyConP :: Parser (Term 'Inferable)
 compoundTyConP =
   vecCon' <$ reserved "Vec"
     <|> variantBracketed
-      ( Variant <$> fieldSeqP "tag" (symbol "|" <* notFollowedBy (symbol ")")) (symbol ":")
+      ( Variant <$> fieldSeqP "tag" (try (symbol "|" <* notFollowedBy (symbol ")"))) (symbol ":")
       )
     <|> between (symbol "{") (symbol "}") (Record <$> fieldSeqP "field" (symbol ",") (symbol ":"))
 
@@ -274,7 +274,7 @@ fieldSeqP tokenName sep fldSep = do
         <* fldSep
         <*> checkableExprP
       )
-      `sepBy` try sep
+      `sepBy` sep
   let dups =
         map fst $
           filter ((> 1) . snd) $
@@ -289,7 +289,7 @@ fieldSeqP tokenName sep fldSep = do
 
 variantBracketed :: Parser a -> Parser a
 variantBracketed p =
-  try (symbol "(" *> symbol "|" *> p <* try (symbol "|" *> symbol ")"))
+  try (symbol "(" *> symbol "|" *> p <* (symbol "|" *> symbol ")"))
     <|> symbol "⦇" *> p <* symbol "⦈"
 
 datConP :: Parser (Term 'Inferable)
@@ -313,7 +313,7 @@ recordChkP =
       (MkRecord <$> fieldSeqP "field" (symbol ",") (symbol "="))
 
 unAnnLamP :: Parser (Term 'Checkable)
-unAnnLamP = label "Unannotated lambda" $ lexeme $ try $ do
+unAnnLamP = label "Unannotated lambda" $ lexeme $ do
   reserved "λ"
   bindee <- some (identifier <?> "variable name")
   void $ symbol "."
