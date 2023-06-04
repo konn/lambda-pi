@@ -63,11 +63,21 @@ jobs:
         wget https://github.com/haskell-hvr/cabal-plan/releases/download/v0.7.3.0/cabal-plan-0.7.3.0-x86_64-linux.xz
         xz -d <cabal-plan-0.7.3.0-x86_64-linux.xz >./cabal-plan
         chmod +x ./cabal-plan
-        mkdir -p artifacts
+        BIN_DIR=artifacts/bin
+        TEST_DIR=artifacts/test
+        BENCH_DIR=artifacts/bench
+        mkdir -p "${BIN_DIR}" "${TEST_DIR}" "${BENCH_DIR}"
         ./cabal-plan list-bins --hide-setup --hide-global --hide-builtin \
-          | grep -e lambda-pi | grep -e lambda-pi | gawk '{print $2}' | \
-          while read -r TARGET; do
-            cp "${TARGET}" artifacts/
+          | grep -e lambda-pi | grep -e lambda-pi |  while read -r COMP_TARGET; do
+            COMP=$(echo "${COMP_TARGET}" | gawk '{print $1}')
+            TARGET=$(echo "${COMP_TARGET}" | gawk '{print $2}')
+            if [[ "${COMP}" =~ :test: ]]; then 
+              cp "${TARGET}" "${TEST_DIR}/"
+            elif [[ "${COMP}" =~ :bench: ]]; then 
+              cp "${TARGET}" "${BENCH_DIR}/"
+            else
+              cp "${TARGET}" "${BIN_DIR}/"
+            fi
         done
         tar -caf artifacts.tar.zst artifacts/
 
