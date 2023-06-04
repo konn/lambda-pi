@@ -96,7 +96,7 @@ jobs:
     - name: Download Artifacts
       uses: actions/download-artifact@v3
     - name: Decompress
-      run: tar xzaf binaries/artifacts.tar.zst
+      run: tar xaf binaries/artifacts.tar.zst
     - name: Run Tests
       run: |
         set -euxo pipefail
