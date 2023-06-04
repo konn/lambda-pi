@@ -1,0 +1,75 @@
+on: push
+name: Build and Test
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        cabal-version: 3.10.1.0
+        ghc-version: 9.2.7
+    - name: Restore ~/.cabal/store
+      uses: actions/cache/restore@v3
+      with:
+        path: ~/.cabal/store
+        key: |
+          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
+        restore-keys: |
+          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-
+          ubuntu-9.2.7-cabal-store-
+    - run: cabal update
+    - name: Build dependencies
+      run: |
+        cabal build --only-dependencies
+
+    - name: Save ~/.cabal/store
+      uses: actions/cache/save@v3
+      with:
+        path: ~/.cabal/store
+        key: |
+          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
+
+    - name: Restore ./dist-newstyle
+      uses: actions/cache/restore@v3
+      with:
+        path: dist-newstyle
+        key: |
+          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
+        restore-keys: |
+          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
+          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-
+          ubuntu-9.2.7-dist-newstyle-
+    
+    - name: Build All
+      id: build
+      run: cabal build --enable-tests --enable-benchmarks
+    - name: Save ./dist-newstyle
+      if: ${{ steps.build.conclusion == 'success' }}
+      uses: actions/cache/save@v3
+      with:
+        path: dist-newstyle
+        key: |
+          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
+    - name: Collect binaries
+      shell: bash
+      run: |
+        set -euxo pipefail
+        wget https://github.com/haskell-hvr/cabal-plan/releases/download/v0.7.3.0/cabal-plan-0.7.3.0-x86_64-linux.xz
+        tar xzvf cabal-plan-0.7.3.0-x86_64-linux.xz
+        mkdir -p artifacts
+        chmod +x ./cabal-plan
+        ./cabal-plan list-bins --hide-setup --hide-global --hide-builtin \
+          | grep -e lambda-pi | grep -e lambda-pi | gawk '{print $2}' | \
+          while read -r TARGET; do
+            cp "${TARGET}" artifacts/
+        done
+        tar -caf artifacts.tar.zst artifacts/
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        path: artifacts.tar.zst
+        name: binaries
