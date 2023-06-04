@@ -103,4 +103,4 @@ jobs:
         find ./artifacts/test -type f | while read -r TEST; do
           chmod +x "${TEST}"
           "${TEST}" +RTS -N4
-        fi
+        done
