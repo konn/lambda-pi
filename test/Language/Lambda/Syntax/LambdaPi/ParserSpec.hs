@@ -27,6 +27,8 @@ inferableCases =
   , ("Vec Nat 5", vecNat5)
   , ("(Vec Nat) 5", vecNat5)
   , ("(Vec Nat 5)", vecNat5)
+  , ("x", Global "x")
+  , ("(x)", Global "x")
   ]
 
 vecNat5 :: Term 'Inferable
