@@ -62,5 +62,5 @@ main = do
   where
     mainLoop = withInterrupt $ handleInterrupt mainLoop $ do
       whileJust_ (getInputLine ">>> ") $ \inp ->
-        handleInterrupt (outputStrLn "^CInterrupted." *> mainLoop) $ do
+        handleInterrupt (outputStrLn "Interrupted.") $ do
           lift $ readEvalPrintM $ T.pack inp

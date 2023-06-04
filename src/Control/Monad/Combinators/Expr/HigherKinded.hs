@@ -29,22 +29,19 @@ import Control.Applicative.Combinators
 import Control.Arrow ((>>>))
 import Control.Lens
 import Control.Monad
+import Control.Monad.Reader (ReaderT (..))
 import Data.Bifunctor.Biff (Biff (..))
+import Data.Bifunctor.Flip (Flip (..))
 import Data.DList.DNonEmpty (DNonEmpty)
 import Data.DList.DNonEmpty qualified as DLNE
 import Data.Dependent.Map (DMap)
 import Data.Dependent.Map qualified as DMap
 import Data.Dependent.Sum
-import Data.FMList (FMList)
-import Data.FMList qualified as FML
 import Data.Foldable
 import Data.Functor.Compose (Compose (..))
-import Data.Functor.Product (Product (..))
-import Data.GADT.Compare (GCompare, GEq, geq)
+import Data.GADT.Compare (GCompare, geq)
 import Data.GADT.Show
 import Data.Kind (Type)
-import Data.List (sortOn)
-import Data.Maybe (fromMaybe)
 import Data.Monoid (Alt (..))
 import Data.Semigroup.Foldable (foldMap1)
 import Data.Set (Set)
@@ -125,13 +122,6 @@ l ~=> r = l :=> Compose r
 pattern (:~=>) :: k a -> f (g a) -> DSum k (Compose f g)
 pattern l :~=> r = l :=> Compose r
 
-asumDMapWithKey :: Alternative g => (forall v. k v -> f v -> g a) -> DMap k f -> g a
-asumDMapWithKey f = getAlt . getConst . DMap.traverseWithKey (fmap (Const . Alt) . f)
-
-dsumParsers :: Alternative m => ParserDict t m f -> m (DSum t f)
-dsumParsers = asumDMapWithKey $ \tv (Compose p) ->
-  (tv :=>) <$> p
-
 asumMapAtLast ::
   forall k f m v e s.
   (MonadParsec e s m, GCompare k) =>
@@ -142,20 +132,28 @@ asumMapAtLast ::
   m (f v)
 asumMapAtLast casters kv terms f = do
   -- FIXME: Can we do this more efficiently (i.e. w/o singleton comparison or re-parsing)?
-  kx :=> fx <- dsumParsers terms
-  let dests =
-        DMap.insert kx (Biff id) $
-          maybe mempty getCompose $
-            DMap.lookup kx casters
-  let simples :: FMList (f v)
-      compounds :: FMList (m (f v))
-      (compounds, simples) =
-        flip foldMap' (DMap.toList dests) $ \(kx' :=> Biff tofx') ->
-          let simpl =
-                foldMap (\Refl -> FML.singleton $ tofx' fx) $
-                  geq kv kx'
-           in (FML.singleton $ f kx fx, simpl)
-  alaf Alt foldMap' try compounds <|> alaf Alt foldMap' pure simples
+
+  let simples, compounds :: m (f v)
+      (Alt compounds, Alt simples) =
+        flip foldMap' (DMap.toList terms) $ \(kx :~=> pfx) ->
+          foldMap'
+            ( \(kx' :=> Biff toFx') ->
+                let simpl =
+                      foldMap' (\Refl -> Alt $ toFx' <$> try pfx) $
+                        geq kx' kv
+                    comp = Alt $ try $ f kx' . toFx' =<< pfx
+                 in (comp, simpl)
+            )
+            $ getCasters kx casters
+  compounds <|> simples
+
+-- | Lookup casters, including identity
+getCasters :: GCompare k => k v -> CastFunctions k f -> [DSum k (Biff (->) f f v)]
+getCasters kx casters =
+  DMap.toList $
+    DMap.insert kx (Biff id) $
+      maybe mempty getCompose $
+        DMap.lookup kx casters
 
 addPrecLevel ::
   forall k m f e s.
@@ -171,8 +169,8 @@ addPrecLevel targs casters terms ops =
     go :: forall v. k v -> m (f v)
     go tv = asumMapAtLast casters tv terms $ \tx fx ->
       parseFixR casters terms fixR tx tv fx
-        <|> parseFixL terms fixL tx tv fx
-        <|> parseFixN terms fixN tx tv fx
+        <|> parseFixL casters terms fixL tx tv fx
+        <|> parseFixN casters terms fixN tx tv fx
 
     (fixN, fixL, fixR) =
       foldMap
@@ -195,28 +193,46 @@ addPrecLevel targs casters terms ops =
         )
         ops
 
-weightSome :: GEq k => k v -> DSum k f -> (Int, Some k)
-weightSome kv (ku :=> _) =
-  case geq kv ku of
-    Just Refl -> (100, Some ku)
-    Nothing -> (0, Some ku)
-
 parserOf ::
+  forall k m f x.
   (GCompare k, Alternative m, MonadFail m, GShow k) =>
+  CastFunctions k f ->
   k x ->
   ParserDict k m f ->
   m (f x)
-parserOf tv = maybe (fail $ "Parser not found for: " <> gshow tv) getCompose . DMap.lookup tv
+parserOf casters kv =
+  let casts' :: DMap k (Flip (Biff (->) f f) x)
+      casts' =
+        DMap.insert kv (Flip (Biff id)) $
+          DMap.mapMaybe
+            ( getCompose
+                >>> DMap.lookup kv
+                >>> fmap Flip
+            )
+            casters
+   in runReaderT
+        $ alaf
+          Alt
+          foldMap'
+          ( \(kx :=> Flip (Biff toFv)) ->
+              ReaderT $
+                maybe
+                  (fail $ "Parser not found for: " <> gshow kx)
+                  (fmap toFv . getCompose)
+                  . DMap.lookup kx
+          )
+        $ DMap.toList casts'
 
 parseFixN ::
   (GCompare k, MonadParsec e s m, MonadFail m, GShow k) =>
+  CastFunctions k f ->
   ParserDict k m f ->
   InfixInOutDic k m f ->
   k from ->
   k to ->
   f from ->
   m (f to)
-parseFixN terms (InfixInOutDic ndic) frm dst x =
+parseFixN casters terms (InfixInOutDic ndic) frm dst x =
   let fixN = DMap.mapWithKey (const $ _Wrapped . _Wrapped %~ DMap.mapWithKey (const $ _Wrapped %~ DLNE.toNonEmpty)) ndic
    in maybe
         ( fail $
@@ -241,9 +257,9 @@ parseFixN terms (InfixInOutDic ndic) frm dst x =
                   alaf
                     Alt
                     foldMap1
-                    ( \(HInfixLike tr p) -> try $ do
+                    ( \(HInfixLike tr p) -> do
                         f <- p
-                        f x $ parserOf tr terms
+                        f x $ parserOf casters tr terms
                     )
                     ents
               )
@@ -254,13 +270,14 @@ parseFixN terms (InfixInOutDic ndic) frm dst x =
 parseFixL ::
   forall k m f from to e s.
   (GCompare k, MonadParsec e s m, MonadFail m, GShow k) =>
+  CastFunctions k f ->
   ParserDict k m f ->
   InfixLDic k m f ->
   k from ->
   k to ->
   f from ->
   m (f to)
-parseFixL terms (InfixLDic ldic) = goL
+parseFixL casters terms (InfixLDic ldic) = goL
   where
     fixL = DMap.mapWithKey (const $ _Wrapped %~ DLNE.toNonEmpty) ldic
     goL :: k x -> k y -> f x -> m (f y)
@@ -278,9 +295,9 @@ parseFixL terms (InfixLDic ldic) = goL
             >>> alaf
               Alt
               foldMap1
-              ( getCompose >>> \(kret :=> HInfixLike tr p) -> try $ do
+              ( getCompose >>> \(kret :=> HInfixLike tr p) -> do
                   f <- p
-                  !z <- f x $ parserOf tr terms
+                  !z <- f x $ parserOf casters tr terms
                   let
                     fall q = case geq kret dst of
                       Just Refl -> q <|> pure z
@@ -328,7 +345,7 @@ parseFixR casters terms (InfixInOutDic rdic) = goR
                   alaf
                     Alt
                     foldMap1
-                    ( \(HInfixLike tr p) -> try $ do
+                    ( \(HInfixLike tr p) -> do
                         f <- p
                         f x $ asumMapAtLast casters tr terms $ \ky !fy -> do
                           goR ky tr fy

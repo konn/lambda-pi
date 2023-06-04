@@ -44,16 +44,16 @@ operators :: [[HOperator SMode Parser Term]]
 operators =
   [
     [ infixR theMode theMode theMode $
-        (:::) <$ symbol ":"
+        (:::) <$ reservedOp ":"
     ]
   ,
     [ InfixR theMode theMode theMode $
         (~>) <$ (reservedOp "->" <|> reservedOp "→")
     ]
-    {- ,
-      [ infixL theMode theMode theMode $
-          (:@:) <$ try appSpaceP
-      ] -}
+  ,
+    [ infixL theMode theMode theMode $
+        (:@:) <$ try appSpaceP
+    ]
   ]
 
 (~>) ::
@@ -62,40 +62,31 @@ operators =
   Parser (Term 'Inferable)
 (~>) l p = Pi l <$> anonymousBind p
 
--- >>> parseOnly (parserOf SInferable exprParsers) "Nat -> Nat"
--- Left "<input>:1:5:\n  |\n1 | Nat -> Nat\n  |     ^\nunexpected '-'\nexpecting end of input\n"
+{-
+>>> parseOnly inferableExprP "Nat -> Nat"
+Right (Pi (Inf Nat) (Inf Nat))
 
--- >>> parseOnly (parserOf SCheckable exprParsers) "Nat -> Nat"
--- Left "<input>:1:5:\n  |\n1 | Nat -> Nat\n  |     ^\nunexpected '-'\nexpecting end of input\n"
+>>> parseOnly checkableExprP "Nat -> Nat"
+Right (Inf (Pi (Inf Nat) (Inf Nat)))
 
--- >>> parseOnly (parserOf SCheckable exprParsers ) "(Nat -> Nat)"
--- Right (Inf (Pi (Inf Nat) (Inf Nat)))
+>>> parseOnly checkableExprP "(Nat -> Nat)"
+Right (Inf (Pi (Inf Nat) (Inf Nat)))
 
--- >>> parseOnly (parserOf SInferable exprParsers ) "(λ x. x) -> Nat"
--- Right (Pi (Inf Nat) (Inf Nat))
+>>> parseOnly inferableExprP "(λ x. x) -> Nat"
+Right (Pi (Lam (Inf (Bound 0))) (Inf Nat))
 
--- >>> parseOnly (parserOf SCheckable exprParsers) "Nat"
--- Right (Inf Nat)
+>>> parseOnly checkableExprP "Nat"
+Right (Inf Nat)
 
--- >>> parseOnly (parserOf SInferable basicTermParsers) "(Nat : Type)"
--- Right (Inf Nat ::: Inf Star)
+>>> parseOnly inferableExprP "Nat : Type"
+Right (Inf Nat ::: Inf Star)
 
--- >>> parseOnly (parserOf SInferable basicTermParsers) "Nat : Type"
--- Left "<input>:1:5:\n  |\n1 | Nat : Type\n  |     ^\nunexpected ':'\nexpecting end of input\n"
+>>> parseOnly checkableExprP "Nat : Type"
+Right (Inf (Inf Nat ::: Inf Star))
 
--- >>> parseOnly (parserOf SInferable exprParsers) "Nat : Type"
--- Right (Inf Nat ::: Inf Star)
-
--- >>> parseOnly (parserOf SCheckable exprParsers) "Nat : Type"
--- Left "<input>:1:5:\n  |\n1 | Nat : Type\n  |     ^\nunexpected ':'\nexpecting end of input\n"
-
--- >>> parseOnly (parserOf SCheckable exprParsers) "(Nat : Type)"
--- Right (Inf (Inf Nat ::: Inf Star))
-
--- >>> parseOnly (parserOf SCheckable basicTermParsers) "Nat"
-
--- >>> parseOnly (parserOf SCheckable basicTermParsers) "Type"
-
+>>> parseOnly checkableExprP "(Nat : Type)"
+Right (Inf (Inf Nat ::: Inf Star))
+-}
 appSpaceP :: Parser ()
 appSpaceP =
   space <* notFollowedBy (satisfy isOperatorSymbol)
@@ -103,31 +94,39 @@ appSpaceP =
 reservedOpNames :: HashSet Text
 reservedOpNames = HS.fromList ["->", "→", ":", "#"]
 
+exprCasters :: CastFunctions SMode Term
+exprCasters = DMap.singleton SInferable (Compose (DMap.singleton SCheckable $ Biff Inf))
+
 exprParsers :: ParserDict SMode Parser Term
 exprParsers =
   makeHExprParser
     (Set.fromList [Some SInferable, Some SCheckable])
-    (DMap.singleton SInferable (Compose (DMap.singleton SCheckable $ Biff Inf)))
+    exprCasters
     basicTermParsers
     operators
+
+inferableExprP :: Parser (Term 'Inferable)
+inferableExprP = parserOf exprCasters SInferable exprParsers
+
+checkableExprP :: Parser (Term 'Checkable)
+checkableExprP = parserOf exprCasters SCheckable exprParsers
 
 basicTermParsers :: ParserDict SMode Parser Term
 basicTermParsers =
   DMap.fromList
     [ SInferable
-        ~=> ( atomicInfTerms
-                <|> parens (parserOf SInferable exprParsers)
+        ~=> ( atomicInfTerms <|> parens inferableExprP
             )
     , SCheckable
-        ~=> ( try unAnnLamP
-                <|> try recordChkP
-                <|> parens (parserOf SCheckable exprParsers)
+        ~=> ( unAnnLamP
+                <|> recordChkP
+                <|> parens checkableExprP
             )
     ]
   where
     atomicInfTerms =
       piP
-        <|> try lamAnnP
+        <|> lamAnnP
         <|> primTypeP
         <|> compoundTyConP
         <|> datConP
@@ -192,13 +191,12 @@ reservedOp name =
   void $ lexeme $ string name <* notFollowedBy (satisfy isOperatorSymbol)
 
 operator :: Parser Text
-operator = label "operator" $
-  try $ do
-    name <- operatorLike
-    when (name `HS.member` reservedOpNames) $
-      fail $
-        "Reserved operator name found: " <> T.unpack name
-    pure name
+operator = label "operator" $ try $ do
+  name <- operatorLike
+  when (name `HS.member` reservedOpNames) $
+    fail $
+      "Reserved operator name found: " <> T.unpack name
+  pure name
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
@@ -236,12 +234,10 @@ binders :: Parser (NonEmpty (Text, Term 'Checkable))
 binders = sconcat <$> NE.some binder
 
 lamAnnP :: Parser (Term 'Inferable)
-lamAnnP = label "Typed lambda abstraction" $
-  lexeme $
-    try $ do
-      reserved "λ"
-      bindees <- binders <* symbol "."
-      foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) inferableExprP bindees
+lamAnnP = label "Typed lambda abstraction" $ try $ do
+  reserved "λ"
+  bindees <- binders <* symbol "."
+  foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) inferableExprP bindees
 
 piP :: Parser (Term 'Inferable)
 piP = label "Pi-binding" $ do
@@ -264,7 +260,7 @@ compoundTyConP =
     <|> variantBracketed
       ( Variant <$> fieldSeqP "tag" (symbol "|" <* notFollowedBy (symbol ")")) (symbol ":")
       )
-    <|> try (between (symbol "{") (symbol "}") (Record <$> fieldSeqP "field" (symbol ",") (symbol ":")))
+    <|> between (symbol "{") (symbol "}") (Record <$> fieldSeqP "field" (symbol ",") (symbol ":"))
 
 fieldSeqP ::
   String ->
@@ -303,16 +299,10 @@ datConP =
     <|> LamAnn Nat' (Succ (Bound' 0)) <$ reserved "succ"
     <|> cons' <$ reserved "cons"
 
-inferableExprP :: Parser (Term 'Inferable)
-inferableExprP = parserOf theMode exprParsers
-
 naturalP :: Parser (Term 'Inferable)
 naturalP =
   lexeme decimal <&> \n ->
     foldr ($) Zero (replicate n (Succ . Inf))
-
-checkableExprP :: Parser (Term 'Checkable)
-checkableExprP = parserOf theMode exprParsers
 
 recordChkP :: Parser (Term 'Checkable)
 recordChkP =
@@ -323,16 +313,14 @@ recordChkP =
       (MkRecord <$> fieldSeqP "field" (symbol ",") (symbol "="))
 
 unAnnLamP :: Parser (Term 'Checkable)
-unAnnLamP = label "Unannotated lambda" $
-  lexeme $
-    try $ do
-      reserved "λ"
-      bindee <- some (identifier <?> "variable name")
-      void $ symbol "."
-      foldr
-        (\var p -> binding var $ Lam <$> p)
-        (checkableExprP <?> "lambda body")
-        bindee
+unAnnLamP = label "Unannotated lambda" $ lexeme $ try $ do
+  reserved "λ"
+  bindee <- some (identifier <?> "variable name")
+  void $ symbol "."
+  foldr
+    (\var p -> binding var $ Lam <$> p)
+    (checkableExprP <?> "lambda body")
+    bindee
 
 parseOnly ::
   Parser a ->
