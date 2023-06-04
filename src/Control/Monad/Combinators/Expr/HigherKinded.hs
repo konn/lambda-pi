@@ -1,5 +1,6 @@
 {-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GADTs #-}
@@ -144,7 +145,7 @@ asumMapAtLast casters kv terms f = try $ do
                in (comp, simpl)
           )
           $ getCasters kx casters
-  comps <|> simpls
+  comps <|> label "fallback term" simpls
 
 -- | Lookup casters, including identity
 getCasters :: GCompare k => k v -> CastFunctions k f -> [DSum k (Biff (->) f f v)]
@@ -192,6 +193,20 @@ addPrecLevel targs casters terms ops =
         )
         ops
 
+preCasters ::
+  GCompare k =>
+  k v ->
+  CastFunctions k f ->
+  DMap k (Flip (Biff (->) f f) v)
+preCasters kv casters =
+  DMap.insert kv (Flip (Biff id)) $
+    DMap.mapMaybe
+      ( getCompose
+          >>> DMap.lookup kv
+          >>> fmap Flip
+      )
+      casters
+
 parserOf ::
   forall k m f x.
   (GCompare k, Alternative m, MonadFail m, GShow k) =>
@@ -200,15 +215,7 @@ parserOf ::
   ParserDict k m f ->
   m (f x)
 parserOf casters kv =
-  let casts' :: DMap k (Flip (Biff (->) f f) x)
-      casts' =
-        DMap.insert kv (Flip (Biff id)) $
-          DMap.mapMaybe
-            ( getCompose
-                >>> DMap.lookup kv
-                >>> fmap Flip
-            )
-            casters
+  let casts' = preCasters kv casters
    in runReaderT
         $ alaf
           Alt
@@ -321,39 +328,46 @@ parseFixR casters terms (InfixInOutDic rdic) = goR
     fixR = DMap.mapWithKey (const $ _Wrapped . _Wrapped %~ DMap.mapWithKey (const $ _Wrapped %~ DLNE.toNonEmpty)) rdic
     goR :: k x -> k y -> f x -> m (f y)
     goR !frm !dst !x =
-      maybe
-        ( fail $
-            "parseFixR: outer key `"
-              <> gshow frm
-              <> "' not found in: "
-              <> show (DMap.keys fixR)
-              <> "; all term parsers: "
-              <> show (DMap.keys terms)
-        )
-        ( \(Compose (Compose dic)) ->
-            maybe
-              ( fail $
-                  "parseFixN: inner key `"
-                    <> gshow dst
-                    <> "' not found in: "
-                    <> show (DMap.keys dic)
-                    <> "; all term parsers: "
-                    <> show (DMap.keys terms)
-              )
-              ( \(Compose ents) ->
-                  alaf
-                    Alt
-                    foldMap1
-                    ( \(HInfixLike tr p) -> do
-                        f <- p
-                        f x $ asumMapAtLast casters tr terms $ \ky !fy -> do
-                          goR ky tr fy
-                    )
-                    ents
-              )
-              $ DMap.lookup dst dic
-        )
-        $ DMap.lookup frm fixR
+      let dests' = DMap.toList $ preCasters dst casters
+       in maybe
+            ( fail $
+                "parseFixR: outer key `"
+                  <> gshow frm
+                  <> "' not found in: "
+                  <> show (DMap.keys fixR)
+                  <> "; all term parsers: "
+                  <> show (DMap.keys terms)
+            )
+            ( \(Compose (Compose dic)) ->
+                alaf
+                  Alt
+                  foldMap'
+                  ( \(dst' :=> Flip (Biff toDst)) ->
+                      maybe
+                        ( fail $
+                            "parseFixN: inner key `"
+                              <> gshow dst'
+                              <> "' not found in: "
+                              <> show (DMap.keys dic)
+                              <> "; all term parsers: "
+                              <> show (DMap.keys terms)
+                        )
+                        ( alaf
+                            Alt
+                            foldMap1
+                            ( \(HInfixLike tr p) -> do
+                                f <- p
+                                fmap toDst $
+                                  f x $
+                                    asumMapAtLast casters tr terms (`goR` tr)
+                            )
+                            . getCompose
+                        )
+                        $ DMap.lookup dst' dic
+                  )
+                  dests'
+            )
+            $ DMap.lookup frm fixR
 
 infixN
   , infixL
