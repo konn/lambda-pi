@@ -62,9 +62,9 @@ jobs:
       run: |
         set -euxo pipefail
         wget https://github.com/haskell-hvr/cabal-plan/releases/download/v0.7.3.0/cabal-plan-0.7.3.0-x86_64-linux.xz
-        tar xzvf cabal-plan-0.7.3.0-x86_64-linux.xz
-        mkdir -p artifacts
+        xz -d <cabal-plan-0.7.3.0-x86_64-linux.xz >./cabal-plan
         chmod +x ./cabal-plan
+        mkdir -p artifacts
         ./cabal-plan list-bins --hide-setup --hide-global --hide-builtin \
           | grep -e lambda-pi | grep -e lambda-pi | gawk '{print $2}' | \
           while read -r TARGET; do
