@@ -86,3 +86,21 @@ jobs:
       with:
         path: artifacts.tar.zst
         name: binaries
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+    - uses: actions/checkout@v3
+    - name: Download Artifacts
+      uses: actions/download-artifact@v3
+    - name: Decompress
+      run: tar xzaf artifacts.tar.zst
+    - name: Run Tests
+      run: |
+        set -euxo pipefail
+        find ./artifacts/test -type f | while read -r TEST; do
+          chmod +x "${TEST}"
+          "${TEST}" +RTS -N4
+        fi
