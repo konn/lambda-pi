@@ -102,22 +102,27 @@ exprParsers =
     operators
 
 inferableExprP :: Parser (Term 'Inferable)
-inferableExprP = parserOf exprCasters SInferable exprParsers
+inferableExprP =
+  parserOf exprCasters SInferable exprParsers
+    <?> "inferrable expression"
 
 checkableExprP :: Parser (Term 'Checkable)
-checkableExprP = parserOf exprCasters SCheckable exprParsers
+checkableExprP =
+  parserOf exprCasters SCheckable exprParsers
+    <?> "checkable expression"
 
 basicTermParsers :: ParserDict SMode Parser Term
 basicTermParsers =
   DMap.fromList
     [ SInferable
-        ~=> ( appsIP <|> parens inferableExprP
-            )
+        ~=> label "inferrable term" (appsIP <|> parens inferableExprP)
     , SCheckable
-        ~=> ( try unAnnLamP
-                <|> recordChkP
-                <|> parens checkableExprP
-            )
+        ~=> label
+          "Checkable term"
+          ( try unAnnLamP
+              <|> recordChkP
+              <|> parens checkableExprP
+          )
     ]
   where
     appsIP = do

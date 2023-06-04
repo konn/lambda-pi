@@ -112,41 +112,39 @@ instance GCompare k => Monoid (InfixLDic k m f) where
 
 type ParserDict k m f = DMap k (Compose m f)
 
-infixr 1 ~=>, :~=>
+infixr 1 ~=>
 
 (~=>) :: k a -> f (g a) -> DSum k (Compose f g)
 l ~=> r = l :=> Compose r
 
-{-# COMPLETE (:~=>) #-}
+asumDMapWithKey :: Alternative g => (forall v. k v -> f v -> g a) -> DMap k f -> g a
+asumDMapWithKey f = getAlt . getConst . DMap.traverseWithKey (fmap (Const . Alt) . f)
 
-pattern (:~=>) :: k a -> f (g a) -> DSum k (Compose f g)
-pattern l :~=> r = l :=> Compose r
+dsumParsers :: Alternative m => ParserDict t m f -> m (DSum t f)
+dsumParsers = asumDMapWithKey $ \tv (Compose p) ->
+  (tv :=>) <$> p
 
 asumMapAtLast ::
   forall k f m v e s.
-  (MonadParsec e s m, GCompare k) =>
+  (MonadParsec e s m, MonadFail m, GCompare k) =>
   CastFunctions k f ->
   k v ->
   ParserDict k m f ->
   (forall z. k z -> f z -> m (f v)) ->
   m (f v)
-asumMapAtLast casters kv terms f = do
-  -- FIXME: Can we do this more efficiently?
-  --  i.e. w/o singleton comparison or re-parsing?
-
-  let simples, compounds :: m (f v)
-      (Alt compounds, Alt simples) =
-        flip foldMap' (DMap.toList terms) $ \(kx :~=> pfx) ->
-          foldMap'
-            ( \(kx' :=> Biff toFx') ->
-                let simpl =
-                      foldMap' (\Refl -> Alt $ toFx' <$> try pfx) $
-                        geq kx' kv
-                    comp = Alt $ try $ f kx' . toFx' =<< pfx
-                 in (comp, simpl)
-            )
-            $ getCasters kx casters
-  compounds <|> simples
+asumMapAtLast casters kv terms f = try $ do
+  kx :=> fx <- dsumParsers terms
+  let (Alt comps, Alt simpls) =
+        foldMap'
+          ( \(kx' :=> Biff toFx') ->
+              let simpl =
+                    foldMap' (\Refl -> Alt $ pure $ toFx' fx) $
+                      geq kx' kv
+                  comp = Alt $ try $ f kx' $ toFx' fx
+               in (comp, simpl)
+          )
+          $ getCasters kx casters
+  comps <|> simpls
 
 -- | Lookup casters, including identity
 getCasters :: GCompare k => k v -> CastFunctions k f -> [DSum k (Biff (->) f f v)]
