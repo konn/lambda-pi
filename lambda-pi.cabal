@@ -118,3 +118,55 @@ executable lambda-pi-exe
     , unordered-containers
     , vector
   default-language: Haskell2010
+
+test-suite lambda-pi-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Language.Lambda.Syntax.LambdaPi.ParserSpec
+      Paths_lambda_pi
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      tasty-discover:tasty-discover
+  build-depends:
+      attoparsec
+    , base >=4.7 && <5
+    , bifunctors
+    , bound
+    , bytestring
+    , containers
+    , dependent-map
+    , dependent-sum
+    , deriving-compat
+    , diagnose
+    , dlist
+    , equational-reasoning
+    , fmlist
+    , generic-lens
+    , ghc-typelits-presburger
+    , hashable
+    , haskeline
+    , lambda-pi
+    , lens
+    , megaparsec
+    , monad-loops
+    , mtl
+    , parser-combinators
+    , parsers
+    , rio
+    , rio-orphans
+    , semigroupoids
+    , semigroups
+    , some
+    , split
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , text
+    , transformers
+    , type-natural
+    , unordered-containers
+    , vector
+  default-language: Haskell2010
