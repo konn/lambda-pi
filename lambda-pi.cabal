@@ -51,6 +51,7 @@ library
     , dlist
     , equational-reasoning
     , fmlist
+    , generic-deriving
     , generic-lens
     , ghc-typelits-presburger
     , hashable
@@ -95,6 +96,7 @@ executable lambda-pi-exe
     , dlist
     , equational-reasoning
     , fmlist
+    , generic-deriving
     , generic-lens
     , ghc-typelits-presburger
     , hashable
@@ -144,6 +146,7 @@ test-suite lambda-pi-test
     , dlist
     , equational-reasoning
     , fmlist
+    , generic-deriving
     , generic-lens
     , ghc-typelits-presburger
     , hashable

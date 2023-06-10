@@ -17,6 +17,7 @@
 module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   -- * Phases
   Parse,
+  Rename,
   Typing,
   TypingMode (..),
   Inferable,
@@ -58,6 +59,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
 
   -- *** Lambda abstraction
   XLam,
+  LamBindType,
   LamBody,
 
   -- *** Pi-types
@@ -133,11 +135,15 @@ data Name = Global Text | Local Int | Quote Int
 
 type family XAnn phase
 
-data Parse
+data Parse deriving (Show, Eq, Ord, Generic)
+
+data Rename deriving (Show, Eq, Ord, Generic)
 
 data TypingMode = Infer | Check
+  deriving (Show, Eq, Ord, Generic)
 
 data Typing (typeMode :: TypingMode)
+  deriving (Show, Eq, Ord, Generic)
 
 data NoExtField = NoExtField
   deriving (Show, Eq, Ord, Generic)
@@ -154,11 +160,15 @@ type Checkable = Typing 'Check
 
 type instance XAnn Parse = NoExtField
 
+type instance XAnn Rename = NoExtField
+
 type instance XAnn Checkable = NoExtField
 
 type family AnnLHS a
 
 type instance AnnLHS Parse = Expr Parse
+
+type instance AnnLHS Rename = Expr Rename
 
 type instance AnnLHS (Typing m) = Expr Checkable
 
@@ -166,11 +176,15 @@ type family AnnRHS a
 
 type instance AnnRHS Parse = Expr Parse
 
+type instance AnnRHS Rename = Expr Rename
+
 type instance AnnRHS (Typing m) = Expr Checkable
 
 type family XStar p
 
 type instance XStar Parse = NoExtField
+
+type instance XStar Rename = NoExtField
 
 type instance XStar (Typing _) = NoExtField
 
@@ -178,11 +192,15 @@ type family XBound p
 
 type instance XBound Parse = NoExtField
 
+type instance XBound Rename = NoExtField
+
 type instance XBound (Typing _) = NoExtField
 
 type family BoundVar p
 
-type instance BoundVar Parse = Int
+type instance BoundVar Parse = Text
+
+type instance BoundVar Rename = Int
 
 type instance BoundVar (Typing _) = Int
 
@@ -194,7 +212,9 @@ type instance XFree (Typing _) = NoExtField
 
 type family FreeVar p
 
-type instance FreeVar Parse = Name
+type instance FreeVar Parse = Text
+
+type instance FreeVar Rename = Name
 
 type instance FreeVar (Typing _) = Name
 
@@ -202,33 +222,53 @@ type family XApp p
 
 type instance XApp Parse = NoExtField
 
+type instance XApp Rename = NoExtField
+
 type instance XApp Inferable = NoExtField
 
 type instance XApp Checkable = NoExtField
 
 type family AppLHS p
 
-type instance AppLHS Parse = NoExtField
+type instance AppLHS Parse = Expr Parse
+
+type instance AppLHS Rename = Expr Rename
 
 type instance AppLHS (Typing _) = Expr Inferable
 
 type family AppRHS p
 
-type instance AppRHS Parse = NoExtField
+type instance AppRHS Parse = Expr Parse
+
+type instance AppRHS Rename = Expr Rename
 
 type instance AppRHS (Typing _) = Expr Checkable
 
 type family XLam p
 
-type instance XLam Parse = NoExtField
+type instance XLam Parse = Text
 
-type instance XLam Inferable = Expr Checkable
+type instance XLam Rename = NoExtField
 
-type instance XLam Checkable = Maybe (Expr Checkable)
+type instance XLam Inferable = NoExtField
+
+type instance XLam Checkable = NoExtField
+
+type family LamBindType p
+
+type instance LamBindType Parse = Maybe (Expr Parse)
+
+type instance LamBindType Rename = Maybe (Expr Rename)
+
+type instance LamBindType Inferable = Expr Checkable
+
+type instance LamBindType Checkable = Maybe (Expr Checkable)
 
 type family LamBody p
 
 type instance LamBody Parse = Expr Parse
+
+type instance LamBody Rename = Expr Rename
 
 type instance LamBody Inferable = Expr Inferable
 
@@ -238,11 +278,15 @@ type family XPi p
 
 type instance XPi Parse = NoExtField
 
+type instance XPi Rename = NoExtField
+
 type instance XPi (Typing m) = NoExtField
 
 type family PiLHS p
 
 type instance PiLHS Parse = Expr Parse
+
+type instance PiLHS Rename = Expr Rename
 
 type instance PiLHS (Typing m) = Expr Checkable
 
@@ -250,11 +294,15 @@ type family PiRHS p
 
 type instance PiRHS Parse = Expr Parse
 
+type instance PiRHS Rename = Expr Rename
+
 type instance PiRHS (Typing m) = Expr Checkable
 
 type family XNat p
 
 type instance XNat Parse = NoExtField
+
+type instance XNat Rename = NoExtField
 
 type instance XNat (Typing _) = NoExtField
 
@@ -262,11 +310,15 @@ type family XZero p
 
 type instance XZero Parse = NoExtField
 
+type instance XZero Rename = NoExtField
+
 type instance XZero (Typing _) = NoExtField
 
 type family XSucc p
 
 type instance XSucc Parse = NoExtField
+
+type instance XSucc Rename = NoExtField
 
 type instance XSucc (Typing _) = NoExtField
 
@@ -274,11 +326,15 @@ type family SuccBody p
 
 type instance SuccBody Parse = Expr Parse
 
+type instance SuccBody Rename = Expr Rename
+
 type instance SuccBody (Typing _) = Expr Checkable
 
 type family XNatElim p
 
 type instance XNatElim Parse = NoExtField
+
+type instance XNatElim Rename = NoExtField
 
 type instance XNatElim (Typing _) = NoExtField
 
@@ -286,11 +342,15 @@ type family NatElimRetFamily a
 
 type instance NatElimRetFamily Parse = Expr Parse
 
+type instance NatElimRetFamily Rename = Expr Rename
+
 type instance NatElimRetFamily (Typing _) = Expr Checkable
 
 type family NatElimBaseCase a
 
 type instance NatElimBaseCase Parse = Expr Parse
+
+type instance NatElimBaseCase Rename = Expr Rename
 
 type instance NatElimBaseCase (Typing _) = Expr Checkable
 
@@ -298,11 +358,15 @@ type family NatElimInductionStep a
 
 type instance NatElimInductionStep Parse = Expr Parse
 
+type instance NatElimInductionStep Rename = Expr Rename
+
 type instance NatElimInductionStep (Typing _) = Expr Checkable
 
 type family NatElimInput a
 
 type instance NatElimInput Parse = Expr Parse
+
+type instance NatElimInput Rename = Expr Rename
 
 type instance NatElimInput (Typing _) = Expr Checkable
 
@@ -310,11 +374,15 @@ type family XVec p
 
 type instance XVec Parse = NoExtField
 
+type instance XVec Rename = NoExtField
+
 type instance XVec (Typing _) = NoExtField
 
 type family VecType p
 
 type instance VecType Parse = Expr Parse
+
+type instance VecType Rename = Expr Rename
 
 type instance VecType (Typing _) = Expr Checkable
 
@@ -322,11 +390,15 @@ type family VecLength p
 
 type instance VecLength Parse = Expr Parse
 
+type instance VecLength Rename = Expr Rename
+
 type instance VecLength (Typing _) = Expr Checkable
 
 type family XNil p
 
 type instance XNil Parse = NoExtField
+
+type instance XNil Rename = NoExtField
 
 type instance XNil (Typing _) = NoExtField
 
@@ -334,11 +406,15 @@ type family NilType p
 
 type instance NilType Parse = Expr Parse
 
+type instance NilType Rename = Expr Rename
+
 type instance NilType (Typing _) = Expr Checkable
 
 type family XCons p
 
 type instance XCons Parse = NoExtField
+
+type instance XCons Rename = NoExtField
 
 type instance XCons (Typing _) = NoExtField
 
@@ -346,11 +422,15 @@ type family ConsType p
 
 type instance ConsType Parse = Expr Parse
 
+type instance ConsType Rename = Expr Rename
+
 type instance ConsType (Typing _) = Expr Checkable
 
 type family ConsLength p
 
 type instance ConsLength Parse = Expr Parse
+
+type instance ConsLength Rename = Expr Rename
 
 type instance ConsLength (Typing _) = Expr Checkable
 
@@ -358,11 +438,15 @@ type family ConsHead p
 
 type instance ConsHead Parse = Expr Parse
 
+type instance ConsHead Rename = Expr Rename
+
 type instance ConsHead (Typing _) = Expr Checkable
 
 type family ConsTail p
 
 type instance ConsTail Parse = Expr Parse
+
+type instance ConsTail Rename = Expr Rename
 
 type instance ConsTail (Typing _) = Expr Checkable
 
@@ -370,11 +454,15 @@ type family XVecElim p
 
 type instance XVecElim Parse = NoExtField
 
+type instance XVecElim Rename = NoExtField
+
 type instance XVecElim (Typing _) = NoExtField
 
 type family VecElimEltType p
 
 type instance VecElimEltType Parse = Expr Parse
+
+type instance VecElimEltType Rename = Expr Rename
 
 type instance VecElimEltType (Typing _) = Expr Checkable
 
@@ -382,11 +470,15 @@ type family VecElimRetFamily p
 
 type instance VecElimRetFamily Parse = Expr Parse
 
+type instance VecElimRetFamily Rename = Expr Rename
+
 type instance VecElimRetFamily (Typing _) = Expr Checkable
 
 type family VecElimBaseCase p
 
 type instance VecElimBaseCase Parse = Expr Parse
+
+type instance VecElimBaseCase Rename = Expr Rename
 
 type instance VecElimBaseCase (Typing _) = Expr Checkable
 
@@ -394,11 +486,15 @@ type family VecElimInductiveStep p
 
 type instance VecElimInductiveStep Parse = Expr Parse
 
+type instance VecElimInductiveStep Rename = Expr Rename
+
 type instance VecElimInductiveStep (Typing _) = Expr Checkable
 
 type family VecElimLength p
 
 type instance VecElimLength Parse = Expr Parse
+
+type instance VecElimLength Rename = Expr Rename
 
 type instance VecElimLength (Typing _) = Expr Checkable
 
@@ -406,17 +502,23 @@ type family VecElimInput p
 
 type instance VecElimInput Parse = Expr Parse
 
+type instance VecElimInput Rename = Expr Rename
+
 type instance VecElimInput (Typing _) = Expr Checkable
 
 type family XRecord p
 
 type instance XRecord Parse = NoExtField
 
+type instance XRecord Rename = NoExtField
+
 type instance XRecord (Typing _) = NoExtField
 
 type family RecordFieldType p
 
 type instance RecordFieldType Parse = Expr Parse
+
+type instance RecordFieldType Rename = Expr Rename
 
 type instance RecordFieldType (Typing _) = Expr Checkable
 
@@ -436,11 +538,15 @@ type family XProjField p
 
 type instance XProjField Parse = NoExtField
 
+type instance XProjField Rename = NoExtField
+
 type instance XProjField (Typing _) = NoExtField
 
 type family ProjFieldRecord p
 
 type instance ProjFieldRecord Parse = Expr Parse
+
+type instance ProjFieldRecord Rename = Expr Rename
 
 type instance ProjFieldRecord (Typing _) = Expr Inferable
 
@@ -448,17 +554,23 @@ type family RecordFieldSelector p
 
 type instance RecordFieldSelector Parse = Text
 
+type instance RecordFieldSelector Rename = Text
+
 type instance RecordFieldSelector (Typing p) = Text
 
 type family XMkRecord p
 
 type instance XMkRecord Parse = NoExtField
 
+type instance XMkRecord Rename = NoExtField
+
 type instance XMkRecord (Typing _) = NoExtField
 
 type family RecordField p
 
 type instance RecordField Parse = Expr Parse
+
+type instance RecordField Rename = Expr Rename
 
 type instance RecordField (Typing _) = Expr Checkable
 
@@ -481,7 +593,7 @@ data Expr phase
   | Bound (XBound phase) (BoundVar phase)
   | Free (XFree phase) (FreeVar phase)
   | App (XApp phase) (AppLHS phase) (AppRHS phase)
-  | Lam (XLam phase) (LamBody phase)
+  | Lam (XLam phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiLHS phase) (PiRHS phase)
   | Nat (XNat phase)
   | Zero (XZero phase)
