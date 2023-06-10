@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
 module Language.Lambda.Syntax.LambdaPi.ParserSpec where
@@ -12,7 +13,11 @@ import Test.Tasty.HUnit
 
 inferableCases :: [(String, Term 'Inferable)]
 inferableCases =
-  [ ("Nat", Nat)
+  [ ("Nat : Type", Inf Nat ::: Inf Star)
+  , ("(Nat : Type)", Inf Nat ::: Inf Star)
+  , ("Vec Nat 0", (LamAnn (Inf Star) (LamAnn (Inf Nat) (Vec (Inf (Bound 1)) (Inf (Bound 0)))) :@: Inf Nat) :@: Inf Zero)
+  , ("(Vec Nat 0)", (LamAnn (Inf Star) (LamAnn (Inf Nat) (Vec (Inf (Bound 1)) (Inf (Bound 0)))) :@: Inf Nat) :@: Inf Zero)
+  , ("Nat", Nat)
   , ("(Nat)", Nat)
   , ("((Nat))", Nat)
   , ("Nat -> Nat", Pi (Inf Nat) $ Inf Nat)
@@ -27,8 +32,8 @@ inferableCases =
   , ("Vec Nat 5", vecNat5)
   , ("(Vec Nat) 5", vecNat5)
   , ("(Vec Nat 5)", vecNat5)
-  , ("x", Global "x")
-  , ("(x)", Global "x")
+  , ("x", Free $ Global "x")
+  , ("(x)", Free $ Global "x")
   ]
 
 vecNat5 :: Term 'Inferable

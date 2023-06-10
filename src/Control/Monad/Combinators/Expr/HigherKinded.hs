@@ -125,7 +125,7 @@ dsumParsers :: Alternative m => ParserDict t m f -> m (DSum t f)
 dsumParsers = asumDMapWithKey $ \tv (Compose p) ->
   (tv :=>) <$> p
 
-asumMapAtLast ::
+readNextTerm ::
   forall k f m v e s.
   (MonadParsec e s m, MonadFail m, GCompare k) =>
   CastFunctions k f ->
@@ -133,7 +133,7 @@ asumMapAtLast ::
   ParserDict k m f ->
   (forall z. k z -> f z -> m (f v)) ->
   m (f v)
-asumMapAtLast casters kv terms f = try $ do
+readNextTerm casters kv terms f = try $ do
   kx :=> fx <- dsumParsers terms
   let (Alt comps, Alt simpls) =
         foldMap'
@@ -167,7 +167,7 @@ addPrecLevel targs casters terms ops =
   DMap.fromList $ map (\(Some t) -> t ~=> go t) $ Set.toList targs
   where
     go :: forall v. k v -> m (f v)
-    go tv = asumMapAtLast casters tv terms $ \tx fx ->
+    go tv = readNextTerm casters tv terms $ \tx fx ->
       parseFixR casters terms fixR tx tv fx
         <|> parseFixL casters terms fixL tx tv fx
         <|> parseFixN casters terms fixN tx tv fx
@@ -359,7 +359,7 @@ parseFixR casters terms (InfixInOutDic rdic) = goR
                                 f <- p
                                 fmap toDst $
                                   f x $
-                                    asumMapAtLast casters tr terms (`goR` tr)
+                                    readNextTerm casters tr terms (`goR` tr)
                             )
                             . getCompose
                         )

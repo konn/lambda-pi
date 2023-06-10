@@ -14,7 +14,7 @@ import Control.Monad.Combinators.Expr.HigherKinded
 import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, local)
 import qualified Data.Bifunctor as Bi
 import Data.Bifunctor.Biff (Biff (..))
-import Data.Char (isAlpha, isAlphaNum, isSymbol)
+import Data.Char (GeneralCategory (ClosePunctuation), generalCategory, isAlpha, isAlphaNum, isSymbol)
 import qualified Data.Dependent.Map as DMap
 import Data.Functor (void, (<&>))
 import Data.HashMap.Strict (HashMap)
@@ -31,7 +31,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import Language.Lambda.Syntax.LambdaPi
-import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhile1P, takeWhileP, try, (<?>))
+import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, lookAhead, notFollowedBy, runParser, satisfy, takeWhile1P, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -53,39 +53,21 @@ operators =
   , [infixL theMode theMode theMode $ (:@:) <$ appSpaceP]
   ]
 
+appSpaceP :: Parser ()
+appSpaceP =
+  space
+    <* notFollowedBy
+      ( satisfy $
+          \ch ->
+            isOperatorSymbol ch
+              || generalCategory ch == ClosePunctuation
+      )
+
 (~>) ::
   Term 'Checkable ->
   Parser (Term 'Checkable) ->
   Parser (Term 'Inferable)
 (~>) l p = Pi l <$> anonymousBind p
-
-{-
->>> parseOnly inferableExprP "Nat -> Nat"
-Right (Pi (Inf Nat) (Inf Nat))
-
->>> parseOnly checkableExprP "Nat -> Nat"
-Right (Inf (Pi (Inf Nat) (Inf Nat)))
-
->>> parseOnly checkableExprP "(Nat -> Nat)"
-Right (Inf (Pi (Inf Nat) (Inf Nat)))
-
->>> parseOnly inferableExprP "(λ x. x) -> Nat"
-Right (Pi (Lam (Inf (Bound 0))) (Inf Nat))
-
->>> parseOnly checkableExprP "Nat"
-Right (Inf Nat)
-
->>> parseOnly inferableExprP "Nat : Type"
-Right (Inf Nat ::: Inf Star)
-
->>> parseOnly checkableExprP "Nat : Type"
-Right (Inf (Inf Nat ::: Inf Star))
-
->>> parseOnly checkableExprP "(Nat : Type)"
-Right (Inf (Inf Nat ::: Inf Star))
--}
-appSpaceP :: Parser ()
-appSpaceP = notFollowedBy (satisfy isOperatorSymbol)
 
 reservedOpNames :: HashSet Text
 reservedOpNames = HS.fromList ["->", "→", ":", "#"]
@@ -200,7 +182,7 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
 parens :: Parser a -> Parser a
-parens = between (symbol "(" <* notFollowedBy (symbol "|")) (symbol ")")
+parens = between (symbol "(" {- <* notFollowedBy (symbol "|") -}) (symbol ")")
 
 symbol :: Text -> Parser Text
 symbol = L.symbol space
