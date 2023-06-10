@@ -32,6 +32,7 @@ library
       Language.Lambda.Syntax.LambdaPi.Parser
       Language.Lambda.Syntax.LambdaPi.REPL
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow
+      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser
   other-modules:
       Paths_lambda_pi
   hs-source-dirs:

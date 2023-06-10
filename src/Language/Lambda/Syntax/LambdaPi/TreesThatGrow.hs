@@ -43,13 +43,9 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   XStar,
 
   -- *** Variables
-
-  -- **** Bound variables
-  XBound,
+  XVar,
+  Id,
   BoundVar,
-
-  -- **** Free variables
-  XFree,
   FreeVar,
 
   -- *** Application
@@ -64,7 +60,8 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
 
   -- *** Pi-types
   XPi,
-  PiLHS,
+  PiVarName,
+  PiVarType,
   PiRHS,
 
   -- *** Naturals
@@ -188,13 +185,38 @@ type instance XStar Rename = NoExtField
 
 type instance XStar (Typing _) = NoExtField
 
-type family XBound p
+type family XVar p
 
-type instance XBound Parse = NoExtField
+type instance XVar Parse = NoExtField
 
-type instance XBound Rename = NoExtField
+type instance XVar Rename = NoExtField
 
-type instance XBound (Typing _) = NoExtField
+type instance XVar (Typing _) = NoExtField
+
+type family Id p
+
+type instance Id Parse = Text
+
+type instance Id Rename = Var Rename
+
+type instance Id (Typing m) = Var (Typing m)
+
+data Var p
+  = Bound (BoundVar p)
+  | Free (FreeVar p)
+  deriving (Generic)
+
+deriving instance
+  (Show (BoundVar p), Show (FreeVar p)) =>
+  Show (Var p)
+
+deriving instance
+  (Eq (BoundVar p), Eq (FreeVar p)) =>
+  Eq (Var p)
+
+deriving instance
+  (Ord (BoundVar p), Ord (FreeVar p)) =>
+  Ord (Var p)
 
 type family BoundVar p
 
@@ -203,12 +225,6 @@ type instance BoundVar Parse = Text
 type instance BoundVar Rename = Int
 
 type instance BoundVar (Typing _) = Int
-
-type family XFree p
-
-type instance XFree Parse = NoExtField
-
-type instance XFree (Typing _) = NoExtField
 
 type family FreeVar p
 
@@ -282,13 +298,21 @@ type instance XPi Rename = NoExtField
 
 type instance XPi (Typing m) = NoExtField
 
-type family PiLHS p
+type family PiVarName p
 
-type instance PiLHS Parse = Expr Parse
+type instance PiVarName Parse = Maybe Text
 
-type instance PiLHS Rename = Expr Rename
+type instance PiVarName Rename = NoExtField
 
-type instance PiLHS (Typing m) = Expr Checkable
+type instance PiVarName (Typing _) = NoExtField
+
+type family PiVarType p
+
+type instance PiVarType Parse = Expr Parse
+
+type instance PiVarType Rename = Expr Rename
+
+type instance PiVarType (Typing _) = Expr Checkable
 
 type family PiRHS p
 
@@ -590,11 +614,10 @@ deriving anyclass instance Hashable (RecordField p) => Hashable (MkRecordFields 
 data Expr phase
   = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
   | Star (XStar phase)
-  | Bound (XBound phase) (BoundVar phase)
-  | Free (XFree phase) (FreeVar phase)
+  | Var (XVar phase) (Id phase)
   | App (XApp phase) (AppLHS phase) (AppRHS phase)
   | Lam (XLam phase) (LamBindType phase) (LamBody phase)
-  | Pi (XPi phase) (PiLHS phase) (PiRHS phase)
+  | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
   | Nat (XNat phase)
   | Zero (XZero phase)
   | Succ (XSucc phase) (SuccBody phase)
