@@ -123,6 +123,8 @@ import Control.Lens.Plated
 import Data.Hashable (Hashable)
 import Data.Text (Text)
 import GHC.Generics (Generic, Rep)
+import Generics.Deriving (GEq (..))
+import Generics.Deriving.Show (GShow (gshowsPrec))
 import RIO (NFData)
 
 data Name = Global Text | Local Int | Quote Int
@@ -509,25 +511,16 @@ instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
   plate = gplate
   {-# INLINE plate #-}
 
-{-
-deriving instance
-  ( Show (XAnn phase)
-  , Show (XStar phase)
-  , Show (XLam phase)
+instance
+  ( GShow (Expr phase)
   ) =>
   Show (Expr phase)
+  where
+  showsPrec = gshowsPrec
 
-deriving instance
-  ( Eq (XAnn phase)
-  , Eq (XStar phase)
-  , Eq (XLam phase)
+instance
+  ( GEq (Expr phase)
   ) =>
   Eq (Expr phase)
-
-deriving instance
-  ( Ord (XAnn phase)
-  , Ord (XStar phase)
-  , Ord (XLam phase)
-  ) =>
-  Ord (Expr phase)
- -}
+  where
+  (==) = geq
