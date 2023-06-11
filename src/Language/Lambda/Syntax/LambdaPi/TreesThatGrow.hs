@@ -45,6 +45,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   -- *** Variables
   XVar,
   Id,
+  Var (..),
   BoundVar,
   FreeVar,
 
@@ -636,6 +637,7 @@ data Expr phase
       (VecElimBaseCase phase)
       (VecElimInductiveStep phase)
       (VecElimLength phase)
+      (VecElimInput phase)
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
   | ProjField (XProjField phase) (ProjFieldRecord phase) (RecordFieldSelector phase)

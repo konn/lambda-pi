@@ -25,6 +25,7 @@ import Data.List (foldl1')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.Strict as Map
 import Data.Semigroup
+import Data.Semigroup.Foldable (fold1)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
@@ -49,7 +50,13 @@ exprP =
             <$ (reservedOp "->" <|> reservedOp "→")
       ]
     , [InfixL $ App NoExtField <$ appSpaceP]
+    , [Postfix fieldProjsP]
     ]
+
+fieldProjsP :: Parser (ParsedExpr -> ParsedExpr)
+fieldProjsP =
+  appEndo . getDual . fold1
+    <$> NE.some (string "." *> identifier <&> \fld -> Dual $ Endo $ flip (ProjField NoExtField) fld)
 
 appSpaceP :: Parser ()
 appSpaceP =

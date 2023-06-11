@@ -42,6 +42,35 @@ inputCases =
   , ("(x)", var "x")
   , ("λ x. x", Lam "x" Nothing (var "x"))
   , ("(λ x. x)", Lam "x" Nothing (var "x"))
+  ,
+    ( "{a: Nat, b: Nat -> Nat}"
+    , Record NoExtField $ RecordFieldTypes [("a", nat), ("b", nat :~> nat)]
+    )
+  ,
+    ( "record {a = Nat, b = succ}"
+    , MkRecord NoExtField $ MkRecordFields [("a", nat), ("b", Lam "n" (Just nat) (succ' $ var "n"))]
+    )
+  , ("rec.foo", ProjField NoExtField (var "rec") "foo")
+  ,
+    ( "rec.foo.bar"
+    , ProjField NoExtField (ProjField NoExtField (var "rec") "foo") "bar"
+    )
+  ,
+    ( "record { foo = 2 : Nat, quux = Nat -> Nat }.foo.bar"
+    , ProjField
+        NoExtField
+        ( ProjField
+            NoExtField
+            ( MkRecord NoExtField $
+                MkRecordFields
+                  [ ("foo", Ann NoExtField (succ' (succ' zero)) nat)
+                  , ("quux", nat :~> nat)
+                  ]
+            )
+            "foo"
+        )
+        "bar"
+    )
   ]
 
 test_exprP :: TestTree
@@ -133,10 +162,7 @@ pattern (:~>) l r = Pi NoExtField Nothing l r
 infixr 0 :~>
 
 vecNat5 :: Expr Parse
-vecNat5 = apps [vecCon', nat, SuccI (SuccI (SuccI (SuccI (SuccI zero))))]
-
-pattern SuccI :: ParsedExpr -> ParsedExpr
-pattern SuccI n = Succ NoExtField n
+vecNat5 = apps [vecCon', nat, succ' (succ' (succ' (succ' (succ' zero))))]
 
 var :: Text -> ParsedExpr
 var = Var NoExtField
