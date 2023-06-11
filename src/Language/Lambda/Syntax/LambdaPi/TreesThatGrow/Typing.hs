@@ -223,8 +223,8 @@ typeCheck i ctx (Lam NoExtField _ _ e) (VPi _ ty ty') = do
     $ Local i
 typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
   Left $
-    "Expected a tem of type `'"
-      <> show (quote 0 ty)
+    "Expected a term of type `"
+      <> show (pprint $ quote 0 ty)
       <> "', but got a lambda: "
       <> show (pprint lam)
 typeCheck _ _ (Ann c _ _) _ = noExtCon c
