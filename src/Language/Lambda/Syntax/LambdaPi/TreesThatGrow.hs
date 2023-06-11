@@ -976,13 +976,15 @@ instance
           | (f, e) <- flds
           ]
   pretty (MkRecord _ (MkRecordFields flds)) =
-    braces $
-      sep $
-        punctuate
-          comma
-          [ text f <+> equals <+> pretty e
-          | (f, e) <- flds
-          ]
+    "record"
+      <+> braces
+        ( sep $
+            punctuate
+              comma
+              [ text f <+> equals <+> pretty e
+              | (f, e) <- flds
+              ]
+        )
   pretty (ProjField _ e fld) =
     withPrecParens 12 (pretty e <> "#" <> text fld)
   pretty (Open _ recd body) =
