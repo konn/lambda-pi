@@ -122,8 +122,7 @@ import Control.Lens.Plated
 import Data.Hashable (Hashable)
 import Data.Text (Text)
 import GHC.Generics (Generic, Rep)
-import Generics.Deriving (GEq (..))
-import Generics.Deriving.Show (GShow (gshowsPrec))
+import GHC.Generics.Constraint
 import RIO (NFData)
 
 data Name = Global Text | Local Int | Quote Int
@@ -646,16 +645,10 @@ instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
   plate = gplate
   {-# INLINE plate #-}
 
-instance
-  ( GShow (Expr phase)
-  ) =>
-  Show (Expr phase)
-  where
-  showsPrec = gshowsPrec
+deriving instance FieldC Show (Expr phase) => Show (Expr phase)
 
-instance
-  ( GEq (Expr phase)
-  ) =>
-  Eq (Expr phase)
-  where
-  (==) = geq
+deriving instance FieldC Eq (Expr phase) => Eq (Expr phase)
+
+deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
+
+deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)

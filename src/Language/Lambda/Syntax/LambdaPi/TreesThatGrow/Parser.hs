@@ -4,11 +4,16 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TupleSections #-}
 
-module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser (exprP) where
+module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser (
+  exprP,
+  parseOnly,
+  parseNamed,
+) where
 
 import Control.Applicative (Alternative (..))
 import Control.Applicative.Combinators (sepBy)
 import qualified Control.Applicative.Combinators.NonEmpty as NE
+import Control.Arrow ((+++))
 import Control.Monad
 import Control.Monad.Combinators.Expr
 import qualified Data.Bifunctor as Bi
@@ -24,7 +29,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
-import Text.Megaparsec (Parsec, between, label, notFollowedBy, satisfy, takeWhile1P, takeWhileP, try, (<?>))
+import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhile1P, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -302,3 +307,16 @@ symbol = L.symbol space
 
 reservedOpNames :: HashSet Text
 reservedOpNames = HS.fromList ["->", "→", ":", "#"]
+
+parseOnly ::
+  Parser a ->
+  Text ->
+  Either String a
+parseOnly = parseNamed "<input>" . (<* eof) . (space *>)
+
+parseNamed ::
+  String ->
+  Parser a ->
+  Text ->
+  Either String a
+parseNamed name p = (errorBundlePretty +++ id) . runParser p name

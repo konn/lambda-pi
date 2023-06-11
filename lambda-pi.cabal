@@ -28,6 +28,7 @@ library
       Control.Monad.Combinators.Expr.HigherKinded
       Data.Bifunctor.Utils
       Data.List.NonEmpty.Utils
+      GHC.Generics.Constraint
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Parser
       Language.Lambda.Syntax.LambdaPi.REPL
@@ -127,6 +128,7 @@ test-suite lambda-pi-test
   main-is: Spec.hs
   other-modules:
       Language.Lambda.Syntax.LambdaPi.ParserSpec
+      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.ParserSpec
       Paths_lambda_pi
   hs-source-dirs:
       test
