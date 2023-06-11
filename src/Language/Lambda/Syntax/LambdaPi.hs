@@ -166,6 +166,53 @@ import GHC.Generics.Constraint
 import RIO (NFData)
 import Text.PrettyPrint.Monadic
 
+data Expr phase
+  = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
+  | Star (XStar phase)
+  | Var (XVar phase) (Id phase)
+  | App (XApp phase) (AppLHS phase) (AppRHS phase)
+  | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
+  | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
+  | Nat (XNat phase)
+  | Zero (XZero phase)
+  | Succ (XSucc phase) (SuccBody phase)
+  | NatElim
+      (XNatElim phase)
+      (NatElimRetFamily phase)
+      (NatElimBaseCase phase)
+      (NatElimInductionStep phase)
+      (NatElimInput phase)
+  | Vec (XVec phase) (VecType phase) (VecLength phase)
+  | Nil (XNil phase) (NilType phase)
+  | Cons (XCons phase) (ConsType phase) (ConsLength phase) (ConsHead phase) (ConsTail phase)
+  | VecElim
+      (XVecElim phase)
+      (VecElimEltType phase)
+      (VecElimRetFamily phase)
+      (VecElimBaseCase phase)
+      (VecElimInductiveStep phase)
+      (VecElimLength phase)
+      (VecElimInput phase)
+  | Record (XRecord phase) (RecordFieldTypes phase)
+  | MkRecord (XMkRecord phase) (MkRecordFields phase)
+  | ProjField (XProjField phase) (ProjFieldRecord phase) Text
+  | -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
+    Open (XOpen phase) (OpenRecord phase) (OpenBody phase)
+  | XExpr (XExpr phase)
+  deriving (Generic)
+
+instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
+  plate = gplate
+  {-# INLINE plate #-}
+
+deriving instance FieldC Show (Expr phase) => Show (Expr phase)
+
+deriving instance FieldC Eq (Expr phase) => Eq (Expr phase)
+
+deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
+
+deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
+
 instance Pretty e NoExtCon where
   pretty = noExtCon
 
@@ -754,53 +801,6 @@ deriving instance Show (XExprTyping m)
 deriving instance Eq (XExprTyping m)
 
 deriving instance Ord (XExprTyping m)
-
-data Expr phase
-  = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
-  | Star (XStar phase)
-  | Var (XVar phase) (Id phase)
-  | App (XApp phase) (AppLHS phase) (AppRHS phase)
-  | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
-  | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
-  | Nat (XNat phase)
-  | Zero (XZero phase)
-  | Succ (XSucc phase) (SuccBody phase)
-  | NatElim
-      (XNatElim phase)
-      (NatElimRetFamily phase)
-      (NatElimBaseCase phase)
-      (NatElimInductionStep phase)
-      (NatElimInput phase)
-  | Vec (XVec phase) (VecType phase) (VecLength phase)
-  | Nil (XNil phase) (NilType phase)
-  | Cons (XCons phase) (ConsType phase) (ConsLength phase) (ConsHead phase) (ConsTail phase)
-  | VecElim
-      (XVecElim phase)
-      (VecElimEltType phase)
-      (VecElimRetFamily phase)
-      (VecElimBaseCase phase)
-      (VecElimInductiveStep phase)
-      (VecElimLength phase)
-      (VecElimInput phase)
-  | Record (XRecord phase) (RecordFieldTypes phase)
-  | MkRecord (XMkRecord phase) (MkRecordFields phase)
-  | ProjField (XProjField phase) (ProjFieldRecord phase) Text
-  | -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
-    Open (XOpen phase) (OpenRecord phase) (OpenBody phase)
-  | XExpr (XExpr phase)
-  deriving (Generic)
-
-instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
-  plate = gplate
-  {-# INLINE plate #-}
-
-deriving instance FieldC Show (Expr phase) => Show (Expr phase)
-
-deriving instance FieldC Eq (Expr phase) => Eq (Expr phase)
-
-deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
-
-deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
 
 data PrettyEnv = PrettyEnv
   { levels :: !(HashMap Text Int)
