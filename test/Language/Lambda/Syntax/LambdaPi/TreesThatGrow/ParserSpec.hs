@@ -14,6 +14,48 @@ import Test.Tasty.HUnit
 
 type ParsedExpr = Expr Parse
 
+inputCases :: [(String, Expr Parse)]
+inputCases =
+  [ ("Nat : Type", Ann NoExtField nat star)
+  , ("(Nat : Type)", Ann NoExtField nat star)
+  ,
+    ( "Vec Nat 0"
+    , apps [vecCon', nat, zero]
+    )
+  , ("(Vec Nat 0)", apps [vecCon', nat, zero])
+  , ("Nat", nat)
+  , ("(Nat)", nat)
+  , ("((Nat))", nat)
+  , ("Nat -> Nat", nat :~> nat)
+  , ("(Nat -> Nat)", nat :~> nat)
+  , ("Nat -> Nat -> Nat", nat :~> nat :~> nat)
+  , ("Nat -> (Nat -> Nat)", nat :~> nat :~> nat)
+  , ("(Nat -> Nat -> Nat)", nat :~> nat :~> nat)
+  , ("(Nat -> (Nat -> Nat))", nat :~> nat :~> nat)
+  , ("(Nat -> Nat) -> Nat", (nat :~> nat) :~> nat)
+  , ("((Nat -> Nat) -> Nat)", (nat :~> nat) :~> nat)
+  , ("natElim", natElim')
+  , ("Vec Nat 5", vecNat5)
+  , ("(Vec Nat) 5", vecNat5)
+  , ("(Vec Nat 5)", vecNat5)
+  , ("x", var "x")
+  , ("(x)", var "x")
+  , ("λ x. x", Lam "x" Nothing (var "x"))
+  , ("(λ x. x)", Lam "x" Nothing (var "x"))
+  ]
+
+test_exprP :: TestTree
+test_exprP =
+  testGroup
+    "exprP"
+    [ testGroup
+        "Regression Test"
+        [ testCase src $
+          parseOnly exprP (T.pack src) @?= Right expect
+        | (src, expect) <- inputCases
+        ]
+    ]
+
 natElim' :: ParsedExpr
 natElim' =
   Lam "t" (Just (Pi NoExtField Nothing nat star))
@@ -90,53 +132,11 @@ pattern (:~>) l r = Pi NoExtField Nothing l r
 
 infixr 0 :~>
 
-inputCases :: [(String, Expr Parse)]
-inputCases =
-  [ ("Nat : Type", Ann NoExtField nat star)
-  , ("(Nat : Type)", Ann NoExtField nat star)
-  ,
-    ( "Vec Nat 0"
-    , apps [vecCon', nat, zero]
-    )
-  , ("(Vec Nat 0)", apps [vecCon', nat, zero])
-  , ("Nat", nat)
-  , ("(Nat)", nat)
-  , ("((Nat))", nat)
-  , ("Nat -> Nat", nat :~> nat)
-  , ("(Nat -> Nat)", nat :~> nat)
-  , ("Nat -> Nat -> Nat", nat :~> nat :~> nat)
-  , ("Nat -> (Nat -> Nat)", nat :~> nat :~> nat)
-  , ("(Nat -> Nat -> Nat)", nat :~> nat :~> nat)
-  , ("(Nat -> (Nat -> Nat))", nat :~> nat :~> nat)
-  , ("(Nat -> Nat) -> Nat", (nat :~> nat) :~> nat)
-  , ("((Nat -> Nat) -> Nat)", (nat :~> nat) :~> nat)
-  , ("natElim", natElim')
-  , ("Vec Nat 5", vecNat5)
-  , ("(Vec Nat) 5", vecNat5)
-  , ("(Vec Nat 5)", vecNat5)
-  , ("x", var "x")
-  , ("(x)", var "x")
-  , ("λ x. x", Lam "x" Nothing (var "x"))
-  , ("(λ x. x)", Lam "x" Nothing (var "x"))
-  ]
-
 vecNat5 :: Expr Parse
 vecNat5 = apps [vecCon', nat, SuccI (SuccI (SuccI (SuccI (SuccI zero))))]
 
 pattern SuccI :: ParsedExpr -> ParsedExpr
 pattern SuccI n = Succ NoExtField n
-
-test_exprP :: TestTree
-test_exprP =
-  testGroup
-    "exprP"
-    [ testGroup
-        "Regression Test"
-        [ testCase src $
-          parseOnly exprP (T.pack src) @?= Right expect
-        | (src, expect) <- inputCases
-        ]
-    ]
 
 var :: Text -> ParsedExpr
 var = Var NoExtField
