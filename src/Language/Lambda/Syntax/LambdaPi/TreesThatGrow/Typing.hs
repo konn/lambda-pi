@@ -427,7 +427,7 @@ typeInfer i ctx (Record NoExtField flds) =
   VStar
     <$ traverse_ (flip (typeCheck i ctx) VStar . snd) (recFieldTypes flds)
 typeInfer i ctx (MkRecord NoExtField (MkRecordFields flds)) = do
-  VMkRecord . HM.fromList
+  VRecord . HM.fromList
     <$> traverse (traverse (typeInfer i ctx)) flds
 typeInfer !i ctx (ProjField NoExtField e f) = do
   typeInfer i ctx e >>= \case
@@ -636,7 +636,7 @@ eval ctx (VecElim _ a m mnil mcons k vk) =
   evalVecElim (eval ctx a) (eval ctx m) (eval ctx mnil) (eval ctx mcons) (eval ctx k) (eval ctx vk)
 eval ctx (Record _ flds) = VRecord $ HM.fromList $ map (Bi.second $ eval ctx) $ recFieldTypes flds
 eval ctx (MkRecord _ recs) =
-  VRecord $ HM.fromList $ map (Bi.second $ eval ctx) $ mkRecFields recs
+  VMkRecord $ HM.fromList $ map (Bi.second $ eval ctx) $ mkRecFields recs
 eval ctx (ProjField _ e f) = evalProjField f $ eval ctx e
 eval ctx (Open _ rcd bdy) =
   case eval ctx rcd of
