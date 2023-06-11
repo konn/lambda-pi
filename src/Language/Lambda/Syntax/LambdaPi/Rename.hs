@@ -7,7 +7,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename where
+module Language.Lambda.Syntax.LambdaPi.Rename where
 
 import Control.Lens
 import Control.Monad.Trans.Reader
@@ -17,7 +17,7 @@ import Data.HashMap.Strict (HashMap)
 import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
+import Language.Lambda.Syntax.LambdaPi
 
 type RenamedExpr = Expr Rename
 

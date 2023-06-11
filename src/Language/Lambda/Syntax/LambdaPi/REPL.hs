@@ -25,10 +25,10 @@ import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Typing
+import Language.Lambda.Syntax.LambdaPi
+import Language.Lambda.Syntax.LambdaPi.Parser
+import Language.Lambda.Syntax.LambdaPi.Rename
+import Language.Lambda.Syntax.LambdaPi.Typing
 import RIO (Display (display), HasLogFunc, IsString (fromString), MonadIO, MonadReader, MonadThrow (throwM), MonadUnliftIO, NonEmpty, catch, displayShow, logError, logInfo, logWarn)
 import RIO.State (MonadState)
 import Text.Megaparsec (eof, optional, (<|>))

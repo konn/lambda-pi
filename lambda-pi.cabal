@@ -32,11 +32,9 @@ library
       GHC.Generics.Constraint
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Parser
+      Language.Lambda.Syntax.LambdaPi.Rename
       Language.Lambda.Syntax.LambdaPi.REPL
-      Language.Lambda.Syntax.LambdaPi.TreesThatGrow
-      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser
-      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename
-      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Typing
+      Language.Lambda.Syntax.LambdaPi.Typing
       Text.PrettyPrint.Monadic
   other-modules:
       Paths_lambda_pi
@@ -141,8 +139,8 @@ test-suite lambda-pi-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.ParserSpec
-      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.RenameSpec
+      Language.Lambda.Syntax.LambdaPi.ParserSpec
+      Language.Lambda.Syntax.LambdaPi.RenameSpec
       Paths_lambda_pi
   hs-source-dirs:
       test

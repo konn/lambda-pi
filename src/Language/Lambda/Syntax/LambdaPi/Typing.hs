@@ -11,7 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Typing (
+module Language.Lambda.Syntax.LambdaPi.Typing (
   -- * Conversion from Renamed AST
   toInferable,
   toCheckable,
@@ -49,7 +49,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.These (These (..))
 import GHC.Generics (Generic)
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
+import Language.Lambda.Syntax.LambdaPi
 
 toInferable :: Expr Rename -> Maybe (Expr Inferable)
 toInferable = \case

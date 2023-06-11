@@ -1,719 +1,1016 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE GHC2021 #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE EmptyDataDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
-{- | Implementation based on:
+{- |
+Implementation based on:
 "<https://www.andres-loeh.de/LambdaPi/ A Tutorial Implementation of a Dependently Typed Lambda Calculus>"
 by Andres Löh, Conor McBride, and Wouter Swiestra.
+This is a variant of LambdaPi syntax tree a la "<https://www.microsoft.com/en-us/research/uploads/prod/2016/11/trees-that-grow.pdf Trees That Grow>" by S. Najd and S. Peyton-Jones.
 -}
-module Language.Lambda.Syntax.LambdaPi where
+module Language.Lambda.Syntax.LambdaPi (
+  -- * Phases
+  Parse,
+  Rename,
+  Typing,
+  XExprTyping (..),
+  TypingMode (..),
+  STypingMode (..),
+  KnownTypingMode (..),
+  Inferable,
+  Checkable,
 
-import Control.Arrow ((+++), (>>>))
-import Control.Lens (Ixed (ix), at, (%~), (.~), (^.), (^?!))
-import Control.Monad (unless)
-import qualified Data.Bifunctor as Bi
-import Data.Bifunctor.Utils (secondA)
-import Data.Foldable (traverse_)
-import Data.Function (fix, (&))
-import Data.GADT.Compare (GCompare (..), GEq (..), GOrdering (..), defaultGeq)
-import Data.GADT.Show
+  -- * AST
+  Name (..),
+  RnId (..),
+  Expr (..),
+  XExpr,
+
+  -- ** TTG types
+  NoExtField (..),
+  NoExtCon (),
+  noExtCon,
+
+  -- ** Field and/or Constructor extension
+
+  -- *** Type annotation
+  XAnn,
+  AnnLHS,
+  AnnRHS,
+
+  -- *** Star
+  XStar,
+
+  -- *** Variables
+  XVar,
+  Id,
+  Var (..),
+  castVar,
+  BoundVar,
+  FreeVar,
+
+  -- *** Application
+  XApp,
+  AppLHS,
+  AppRHS,
+
+  -- *** Lambda abstraction
+  XLam,
+  LamBindName,
+  LamBindType,
+  LamBody,
+
+  -- *** Pi-types
+  XPi,
+  DepName (..),
+  maybeName,
+  PiVarName,
+  PiVarType,
+  PiRHS,
+
+  -- *** Naturals
+  XNat,
+
+  -- **** constructors
+  XZero,
+  XSucc,
+  SuccBody,
+
+  -- **** eliminator
+  XNatElim,
+  NatElimRetFamily,
+  NatElimBaseCase,
+  NatElimInductionStep,
+  NatElimInput,
+
+  -- *** Vectors
+  XVec,
+  VecType,
+  VecLength,
+
+  -- **** Constructors
+  XNil,
+  NilType,
+  XCons,
+  ConsType,
+  ConsLength,
+  ConsHead,
+  ConsTail,
+
+  -- **** Elminator
+  XVecElim,
+  VecElimEltType,
+  VecElimRetFamily,
+  VecElimBaseCase,
+  VecElimInductiveStep,
+  VecElimLength,
+  VecElimInput,
+
+  -- *** Record
+  XRecord,
+  RecordFieldTypes (..),
+  RecordFieldType,
+
+  -- **** Constructors
+  XMkRecord,
+  MkRecordFields (..),
+  RecordField,
+
+  -- **** Eliminators
+  XProjField,
+  ProjFieldRecord,
+  XOpen,
+  OpenRecord,
+  OpenBody,
+
+  -- * Pretty-printing
+  pprint,
+  VarLike (..),
+  DocM (..),
+  HasBindeeType (..),
+) where
+
+import Control.Arrow ((>>>))
+import Control.Lens
+import Control.Monad (forM_)
+import Control.Monad.Reader.Class
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HM
 import Data.Hashable (Hashable)
-import Data.List (foldl1', sort, sortOn)
-import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NE
-import Data.Maybe (fromMaybe)
-import Data.Monoid (Endo (..))
-import Data.Semigroup.Foldable (intercalateMap1)
-import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
-import Data.Sequence (Seq, (<|))
+import Data.Kind (Type)
+import Data.Maybe
+import Data.Semigroup.Generic
+import Data.Sequence (Seq)
+import Data.Sequence qualified as Seq
 import Data.Text (Text)
-import qualified Data.Text as T
-import GHC.Generics (Generic)
-import Numeric.Natural (Natural)
+import Data.Text qualified as T
+import GHC.Generics (Generic, Rep)
+import GHC.Generics.Constraint
+import RIO (NFData)
+import Text.PrettyPrint.Monadic
 
-data Mode = Inferable | Checkable
-  deriving (Show, Eq, Ord, Generic)
-
-data SMode (m :: Mode) where
-  SInferable :: SMode 'Inferable
-  SCheckable :: SMode 'Checkable
-
-instance GShow SMode where
-  gshowsPrec _ SInferable = showString "SInferable"
-  gshowsPrec _ SCheckable = showString "SCheckable"
-
-instance GEq SMode where
-  geq = defaultGeq
-
-instance GCompare SMode where
-  gcompare SInferable SCheckable = GLT
-  gcompare SInferable SInferable = GEQ
-  gcompare SCheckable SCheckable = GEQ
-  gcompare SCheckable SInferable = GGT
-
-class KnownMode mode where
-  theMode :: SMode mode
-
-instance KnownMode 'Inferable where
-  theMode = SInferable
-
-instance KnownMode 'Checkable where
-  theMode = SCheckable
-
-data family Term (mode :: Mode)
-
-data instance Term 'Inferable
-  = Term 'Checkable ::: Term 'Checkable
-  | Star
-  | LamAnn (Term 'Checkable) (Term 'Inferable)
-  | Pi (Term 'Checkable) (Term 'Checkable)
-  | NatElim (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable)
-  | Bound Int
-  | Free Name
-  | Term 'Inferable :@: Term 'Checkable
-  | Nat
-  | Zero
-  | Succ (Term 'Checkable)
-  | Vec (Term 'Checkable) (Term 'Checkable)
-  | Cons (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable)
-  | VecElim (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable) (Term 'Checkable)
-  | Variant [(Text, Term 'Checkable)]
-  | Record [(Text, Term 'Checkable)]
-  | -- | Field Projection
-    Term 'Inferable :#: Text
-  | Nil (Term 'Checkable)
-  deriving (Show, Eq, Ord)
-
-infixl 0 :::
-
-infixl 9 :@:
-
-infixl 9 :#:
-
-data instance Term 'Checkable
-  = Inf (Term 'Inferable)
-  | Lam (Term 'Checkable)
-  | MkRecord [(Text, Term 'Checkable)]
-  deriving (Show, Eq, Ord)
+instance Pretty e NoExtCon where
+  pretty = noExtCon
 
 data Name = Global Text | Local Int | Quote Int
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (Hashable)
 
-type Type = Value
+data Parse deriving (Show, Eq, Ord, Generic)
 
-data Value
-  = VLam (Value -> Value)
-  | VStar
-  | VNat
-  | VZero
-  | VSucc Value
-  | VPi Value (Value -> Value)
-  | VNeutral Neutral
-  | VVec Value Value
-  | VVariant (HashMap Text Value)
-  | VRecord (HashMap Text Value)
-  | VMkRecord (HashMap Text Value)
-  | VNil Value
-  | VCons Value Value Value Value
+data Rename deriving (Show, Eq, Ord, Generic)
+
+data TypingMode = Infer | Check
+  deriving (Show, Eq, Ord, Generic)
+
+data STypingMode (m :: TypingMode) where
+  SInfer :: STypingMode 'Infer
+  SCheck :: STypingMode 'Check
+
+class KnownTypingMode m where
+  typingModeVal :: STypingMode m
+
+instance KnownTypingMode 'Infer where
+  typingModeVal = SInfer
+
+instance KnownTypingMode 'Check where
+  typingModeVal = SCheck
+
+data Typing (typeMode :: TypingMode)
+  deriving (Show, Eq, Ord, Generic)
+
+data NoExtField = NoExtField
+  deriving (Show, Eq, Ord, Generic)
+
+data NoExtCon
+  deriving (Show, Eq, Ord, Generic)
+
+noExtCon :: NoExtCon -> a
+noExtCon = \case {}
+
+type Inferable = Typing 'Infer
+
+type Checkable = Typing 'Check
+
+type family XAnn phase
+
+type instance XAnn Parse = NoExtField
+
+type instance XAnn Rename = NoExtField
+
+type instance XAnn Inferable = NoExtField
+
+type instance XAnn Checkable = NoExtCon
+
+type family AnnLHS a
+
+type instance AnnLHS Parse = Expr Parse
+
+type instance AnnLHS Rename = Expr Rename
+
+type instance AnnLHS (Typing m) = Expr Checkable
+
+type family AnnRHS a
+
+type instance AnnRHS Parse = Expr Parse
+
+type instance AnnRHS Rename = Expr Rename
+
+type instance AnnRHS (Typing m) = Expr Checkable
+
+type family XStar p
+
+type instance XStar Parse = NoExtField
+
+type instance XStar Rename = NoExtField
+
+type instance XStar Inferable = NoExtField
+
+type instance XStar Checkable = NoExtCon
+
+type family XVar p
+
+type instance XVar Parse = NoExtField
+
+type instance XVar Rename = NoExtField
+
+type instance XVar Inferable = NoExtField
+
+type instance XVar Checkable = NoExtCon
+
+type family Id p
+
+type instance Id Parse = Text
+
+type instance Id Rename = RnId
+
+data RnId
+  = RnGlobal Text
+  | RnBound !Int
+  deriving (Show, Eq, Ord, Generic)
+
+type instance Id (Typing m) = FreeVar (Typing m)
+
+castVar ::
+  (BoundVar p ~ BoundVar p', FreeVar p ~ FreeVar p') =>
+  Var p ->
+  Var p'
+castVar (Bound b) = Bound b
+castVar (Free b) = Free b
+
+data Var p
+  = Bound (BoundVar p)
+  | Free (FreeVar p)
   deriving (Generic)
 
-instance Show Value where
-  showsPrec d val = prettyChkPrec 0 d $ quote 0 val
+deriving instance
+  (Show (BoundVar p), Show (FreeVar p)) =>
+  Show (Var p)
 
-data Neutral
-  = NFree Name
-  | NApp Neutral Value
-  | NNatElim Value Value Value Neutral
-  | NVecElim Value Value Value Value Value Neutral
-  | NProjField Neutral Text
+deriving instance
+  (Eq (BoundVar p), Eq (FreeVar p)) =>
+  Eq (Var p)
+
+deriving instance
+  (Ord (BoundVar p), Ord (FreeVar p)) =>
+  Ord (Var p)
+
+type family BoundVar p
+
+type instance BoundVar Parse = Text
+
+type instance BoundVar Rename = Int
+
+type instance BoundVar (Typing _) = Int
+
+type family FreeVar p
+
+type instance FreeVar Parse = Text
+
+type instance FreeVar Rename = Name
+
+type instance FreeVar (Typing _) = Name
+
+type family XApp p
+
+type instance XApp Parse = NoExtField
+
+type instance XApp Rename = NoExtField
+
+type instance XApp Inferable = NoExtField
+
+type instance XApp Checkable = NoExtCon
+
+type family AppLHS p
+
+type instance AppLHS Parse = Expr Parse
+
+type instance AppLHS Rename = Expr Rename
+
+type instance AppLHS (Typing _) = Expr Inferable
+
+type family AppRHS p
+
+type instance AppRHS Parse = Expr Parse
+
+type instance AppRHS Rename = Expr Rename
+
+type instance AppRHS (Typing _) = Expr Checkable
+
+type family XLam p
+
+type instance XLam Parse = NoExtField
+
+type instance XLam Rename = NoExtField
+
+type instance XLam (Typing _) = NoExtField
+
+type family LamBindName p
+
+type instance LamBindName Parse = Text
+
+type instance LamBindName Rename = Maybe Text
+
+type instance LamBindName (Typing m) = Maybe Text
+
+type family LamBindType p
+
+type instance LamBindType Parse = Maybe (Expr Parse)
+
+type instance LamBindType Rename = Maybe (Expr Rename)
+
+type instance LamBindType Inferable = Expr Checkable
+
+type instance LamBindType Checkable = Maybe (Expr Checkable)
+
+type family LamBody p
+
+type instance LamBody Parse = Expr Parse
+
+type instance LamBody Rename = Expr Rename
+
+type instance LamBody (Typing m) = Expr (Typing m)
+
+type family XPi p
+
+type instance XPi Parse = NoExtField
+
+type instance XPi Rename = NoExtField
+
+type instance XPi Inferable = NoExtField
+
+type instance XPi Checkable = NoExtCon
+
+type family PiVarName p
+
+maybeName :: DepName -> Maybe Text
+maybeName = \case
+  Indep -> Nothing
+  DepAnon -> Nothing
+  DepNamed t -> Just t
+
+data DepName = Indep | DepAnon | DepNamed Text
+  deriving (Show, Eq, Ord, Generic)
+
+type instance PiVarName Parse = DepName
+
+type instance PiVarName Rename = Maybe Text
+
+type instance PiVarName (Typing _) = Maybe Text
+
+type family PiVarType p
+
+type instance PiVarType Parse = Expr Parse
+
+type instance PiVarType Rename = Expr Rename
+
+type instance PiVarType (Typing _) = Expr Checkable
+
+type family PiRHS p
+
+type instance PiRHS Parse = Expr Parse
+
+type instance PiRHS Rename = Expr Rename
+
+type instance PiRHS (Typing _) = Expr Checkable
+
+type family XNat p
+
+type instance XNat Parse = NoExtField
+
+type instance XNat Rename = NoExtField
+
+type instance XNat Inferable = NoExtField
+
+type instance XNat Checkable = NoExtCon
+
+type family XZero p
+
+type instance XZero Parse = NoExtField
+
+type instance XZero Rename = NoExtField
+
+type instance XZero Inferable = NoExtField
+
+type instance XZero Checkable = NoExtCon
+
+type family XSucc p
+
+type instance XSucc Parse = NoExtField
+
+type instance XSucc Rename = NoExtField
+
+type instance XSucc Inferable = NoExtField
+
+type instance XSucc Checkable = NoExtCon
+
+type family SuccBody p
+
+type instance SuccBody Parse = Expr Parse
+
+type instance SuccBody Rename = Expr Rename
+
+type instance SuccBody (Typing _) = Expr Checkable
+
+type family XNatElim p
+
+type instance XNatElim Parse = NoExtField
+
+type instance XNatElim Rename = NoExtField
+
+type instance XNatElim Inferable = NoExtField
+
+type instance XNatElim Checkable = NoExtCon
+
+type family NatElimRetFamily a
+
+type instance NatElimRetFamily Parse = Expr Parse
+
+type instance NatElimRetFamily Rename = Expr Rename
+
+type instance NatElimRetFamily (Typing _) = Expr Checkable
+
+type family NatElimBaseCase a
+
+type instance NatElimBaseCase Parse = Expr Parse
+
+type instance NatElimBaseCase Rename = Expr Rename
+
+type instance NatElimBaseCase (Typing _) = Expr Checkable
+
+type family NatElimInductionStep a
+
+type instance NatElimInductionStep Parse = Expr Parse
+
+type instance NatElimInductionStep Rename = Expr Rename
+
+type instance NatElimInductionStep (Typing _) = Expr Checkable
+
+type family NatElimInput a
+
+type instance NatElimInput Parse = Expr Parse
+
+type instance NatElimInput Rename = Expr Rename
+
+type instance NatElimInput (Typing _) = Expr Checkable
+
+type family XVec p
+
+type instance XVec Parse = NoExtField
+
+type instance XVec Rename = NoExtField
+
+type instance XVec Inferable = NoExtField
+
+type instance XVec Checkable = NoExtCon
+
+type family VecType p
+
+type instance VecType Parse = Expr Parse
+
+type instance VecType Rename = Expr Rename
+
+type instance VecType (Typing _) = Expr Checkable
+
+type family VecLength p
+
+type instance VecLength Parse = Expr Parse
+
+type instance VecLength Rename = Expr Rename
+
+type instance VecLength (Typing _) = Expr Checkable
+
+type family XNil p
+
+type instance XNil Parse = NoExtField
+
+type instance XNil Rename = NoExtField
+
+type instance XNil Inferable = NoExtField
+
+type instance XNil Checkable = NoExtCon
+
+type family NilType p
+
+type instance NilType Parse = Expr Parse
+
+type instance NilType Rename = Expr Rename
+
+type instance NilType (Typing _) = Expr Checkable
+
+type family XCons p
+
+type instance XCons Parse = NoExtField
+
+type instance XCons Rename = NoExtField
+
+type instance XCons Inferable = NoExtField
+
+type instance XCons Checkable = NoExtCon
+
+type family ConsType p
+
+type instance ConsType Parse = Expr Parse
+
+type instance ConsType Rename = Expr Rename
+
+type instance ConsType (Typing _) = Expr Checkable
+
+type family ConsLength p
+
+type instance ConsLength Parse = Expr Parse
+
+type instance ConsLength Rename = Expr Rename
+
+type instance ConsLength (Typing _) = Expr Checkable
+
+type family ConsHead p
+
+type instance ConsHead Parse = Expr Parse
+
+type instance ConsHead Rename = Expr Rename
+
+type instance ConsHead (Typing _) = Expr Checkable
+
+type family ConsTail p
+
+type instance ConsTail Parse = Expr Parse
+
+type instance ConsTail Rename = Expr Rename
+
+type instance ConsTail (Typing _) = Expr Checkable
+
+type family XVecElim p
+
+type instance XVecElim Parse = NoExtField
+
+type instance XVecElim Rename = NoExtField
+
+type instance XVecElim Inferable = NoExtField
+
+type instance XVecElim Checkable = NoExtCon
+
+type family VecElimEltType p
+
+type instance VecElimEltType Parse = Expr Parse
+
+type instance VecElimEltType Rename = Expr Rename
+
+type instance VecElimEltType (Typing _) = Expr Checkable
+
+type family VecElimRetFamily p
+
+type instance VecElimRetFamily Parse = Expr Parse
+
+type instance VecElimRetFamily Rename = Expr Rename
+
+type instance VecElimRetFamily (Typing _) = Expr Checkable
+
+type family VecElimBaseCase p
+
+type instance VecElimBaseCase Parse = Expr Parse
+
+type instance VecElimBaseCase Rename = Expr Rename
+
+type instance VecElimBaseCase (Typing _) = Expr Checkable
+
+type family VecElimInductiveStep p
+
+type instance VecElimInductiveStep Parse = Expr Parse
+
+type instance VecElimInductiveStep Rename = Expr Rename
+
+type instance VecElimInductiveStep (Typing _) = Expr Checkable
+
+type family VecElimLength p
+
+type instance VecElimLength Parse = Expr Parse
+
+type instance VecElimLength Rename = Expr Rename
+
+type instance VecElimLength (Typing _) = Expr Checkable
+
+type family VecElimInput p
+
+type instance VecElimInput Parse = Expr Parse
+
+type instance VecElimInput Rename = Expr Rename
+
+type instance VecElimInput (Typing _) = Expr Checkable
+
+type family XRecord p
+
+type instance XRecord Parse = NoExtField
+
+type instance XRecord Rename = NoExtField
+
+type instance XRecord Inferable = NoExtField
+
+type instance XRecord Checkable = NoExtCon
+
+type family RecordFieldType p
+
+type instance RecordFieldType Parse = Expr Parse
+
+type instance RecordFieldType Rename = Expr Rename
+
+type instance RecordFieldType (Typing _) = Expr Checkable
+
+newtype RecordFieldTypes p = RecordFieldTypes {recFieldTypes :: [(Text, RecordFieldType p)]}
   deriving (Generic)
 
-vfree :: Name -> Value
-vfree = VNeutral . NFree
+deriving instance
+  Show (RecordFieldType p) => Show (RecordFieldTypes p)
 
-data Env = Env
-  { namedBinds :: !(HM.HashMap Text Value)
-  , localBinds :: !(Seq Value)
+deriving instance
+  Eq (RecordFieldType p) => Eq (RecordFieldTypes p)
+
+deriving instance
+  Ord (RecordFieldType p) => Ord (RecordFieldTypes p)
+
+type family XProjField p
+
+type instance XProjField Parse = NoExtField
+
+type instance XProjField Rename = NoExtField
+
+type instance XProjField Inferable = NoExtField
+
+type instance XProjField Checkable = NoExtCon
+
+type family ProjFieldRecord p
+
+type instance ProjFieldRecord Parse = Expr Parse
+
+type instance ProjFieldRecord Rename = Expr Rename
+
+type instance ProjFieldRecord (Typing _) = Expr Inferable
+
+type family XMkRecord p
+
+type instance XMkRecord Parse = NoExtField
+
+type instance XMkRecord Rename = NoExtField
+
+type instance XMkRecord (Typing _) = NoExtField
+
+type family RecordField p
+
+type instance RecordField Parse = Expr Parse
+
+type instance RecordField Rename = Expr Rename
+
+type instance RecordField (Typing m) = Expr (Typing m)
+
+newtype MkRecordFields p = MkRecordFields {mkRecFields :: [(Text, RecordField p)]}
+  deriving (Generic)
+
+deriving instance Show (RecordField p) => Show (MkRecordFields p)
+
+deriving instance Eq (RecordField p) => Eq (MkRecordFields p)
+
+deriving instance Ord (RecordField p) => Ord (MkRecordFields p)
+
+deriving anyclass instance NFData (RecordField p) => NFData (MkRecordFields p)
+
+deriving anyclass instance Hashable (RecordField p) => Hashable (MkRecordFields p)
+
+type family XOpen p
+
+type instance XOpen Parse = NoExtField
+
+type instance XOpen Rename = NoExtField
+
+type instance XOpen (Typing m) = NoExtField
+
+type family OpenRecord p
+
+type instance OpenRecord Parse = Expr Parse
+
+type instance OpenRecord Rename = Expr Rename
+
+type instance OpenRecord (Typing m) = Expr Inferable
+
+type family OpenBody p
+
+type instance OpenBody Parse = Expr Parse
+
+type instance OpenBody Rename = Expr Rename
+
+type instance OpenBody (Typing m) = Expr (Typing m)
+
+type family XExpr p
+
+type instance XExpr Parse = NoExtCon
+
+type instance XExpr Rename = NoExtCon
+
+type instance XExpr (Typing m) = XExprTyping m
+
+type XExprTyping :: TypingMode -> Type
+data XExprTyping m where
+  BVar :: Int -> XExprTyping 'Infer
+  Inf :: Expr Inferable -> XExprTyping 'Check
+
+deriving instance Show (XExprTyping m)
+
+deriving instance Eq (XExprTyping m)
+
+deriving instance Ord (XExprTyping m)
+
+data Expr phase
+  = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
+  | Star (XStar phase)
+  | Var (XVar phase) (Id phase)
+  | App (XApp phase) (AppLHS phase) (AppRHS phase)
+  | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
+  | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
+  | Nat (XNat phase)
+  | Zero (XZero phase)
+  | Succ (XSucc phase) (SuccBody phase)
+  | NatElim
+      (XNatElim phase)
+      (NatElimRetFamily phase)
+      (NatElimBaseCase phase)
+      (NatElimInductionStep phase)
+      (NatElimInput phase)
+  | Vec (XVec phase) (VecType phase) (VecLength phase)
+  | Nil (XNil phase) (NilType phase)
+  | Cons (XCons phase) (ConsType phase) (ConsLength phase) (ConsHead phase) (ConsTail phase)
+  | VecElim
+      (XVecElim phase)
+      (VecElimEltType phase)
+      (VecElimRetFamily phase)
+      (VecElimBaseCase phase)
+      (VecElimInductiveStep phase)
+      (VecElimLength phase)
+      (VecElimInput phase)
+  | Record (XRecord phase) (RecordFieldTypes phase)
+  | MkRecord (XMkRecord phase) (MkRecordFields phase)
+  | ProjField (XProjField phase) (ProjFieldRecord phase) Text
+  | -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
+    Open (XOpen phase) (OpenRecord phase) (OpenBody phase)
+  | XExpr (XExpr phase)
+  deriving (Generic)
+
+instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
+  plate = gplate
+  {-# INLINE plate #-}
+
+deriving instance FieldC Show (Expr phase) => Show (Expr phase)
+
+deriving instance FieldC Eq (Expr phase) => Eq (Expr phase)
+
+deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
+
+deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
+
+data PrettyEnv = PrettyEnv
+  { levels :: !(HashMap Text Int)
+  , boundVars :: !(Seq (Text, Int))
   }
-  deriving (Show, Generic)
-  deriving (Semigroup, Monoid) via GenericSemigroupMonoid Env
+  deriving (Show, Eq, Ord, Generic)
+  deriving (Semigroup, Monoid) via GenericSemigroupMonoid PrettyEnv
 
-evalInf :: Env -> Term 'Inferable -> Value
-evalInf ctx (e ::: _) = evalChk ctx e
-evalInf ctx (LamAnn _ e) = VLam $ \x ->
-  evalInf
-    (ctx & #localBinds %~ (x <|))
-    e
-evalInf ctx (Bound n) = ctx ^?! #localBinds . ix n
-evalInf ctx (Free (Global g))
-  | Just v <- ctx ^. #namedBinds . at g = v
-evalInf _ (Free n) = vfree n
-evalInf ctx (f :@: x) = evalInf ctx f @@ evalChk ctx x
-evalInf _ Star = VStar
-evalInf ctx (Pi t t') = VPi (evalChk ctx t) $ \x -> evalChk (ctx & #localBinds %~ (x <|)) t'
-evalInf _ Nat = VNat
-evalInf _ Zero = VZero
-evalInf ctx (Succ k) = VSucc $ evalChk ctx k
-evalInf ctx (NatElim m mz ms k) =
-  evalNatElim (evalChk ctx m) (evalChk ctx mz) (evalChk ctx ms) (evalChk ctx k)
-evalInf ctx (Vec a n) = VVec (evalChk ctx a) (evalChk ctx n)
-evalInf ctx (Nil a) = VNil $ evalChk ctx a
-evalInf ctx (Cons a k v vk) =
-  VCons
-    (evalChk ctx a)
-    (evalChk ctx k)
-    (evalChk ctx v)
-    (evalChk ctx vk)
-evalInf ctx (VecElim a m mnil mcons k vk) =
-  evalVecElim (evalChk ctx a) (evalChk ctx m) (evalChk ctx mnil) (evalChk ctx mcons) (evalChk ctx k) (evalChk ctx vk)
-evalInf ctx (Variant vars) = VVariant $ HM.fromList $ map (Bi.second $ evalChk ctx) vars
-evalInf ctx (Record flds) = VRecord $ HM.fromList $ map (Bi.second $ evalChk ctx) flds
-evalInf ctx (r :#: f) = evalProjField f (evalInf ctx r)
+class VarLike v where
+  varName :: MonadReader PrettyEnv m => v -> m (Maybe Text)
 
-evalProjField :: Text -> Value -> Value
-evalProjField f =
-  \case
-    VMkRecord flds ->
-      fromMaybe
-        ( error $
-            "Impossible: given record doesn't have a field `"
-              <> T.unpack f
-              <> "': "
-              <> show (sort $ HM.keys flds)
+instance VarLike DepName where
+  varName Indep = pure Nothing
+  varName DepAnon = pure Nothing
+  varName (DepNamed n) = pure $ Just n
+
+instance VarLike Text where
+  varName = pure . Just
+
+instance VarLike (Maybe Text) where
+  varName = pure
+
+instance VarLike Name where
+  varName (Local i) = do
+    mtn <- preview $ #boundVars . ix i
+    case mtn of
+      Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
+      Nothing ->
+        pure $
+          Just $
+            "<<Local: " <> T.pack (show i) <> ">>"
+  varName (Global t) = pure $ Just t
+  varName q@Quote {} = error $ "Could not occur: " <> show q
+
+class HasBindeeType v where
+  type BindeeType v
+  type BindeeType v = v
+  bindeeType :: v -> Maybe (BindeeType v)
+  default bindeeType :: BindeeType v ~ v => v -> Maybe (BindeeType v)
+  bindeeType = Just
+
+instance HasBindeeType (Expr m)
+
+instance HasBindeeType e => HasBindeeType (Maybe e) where
+  type BindeeType (Maybe e) = BindeeType e
+  bindeeType = (bindeeType =<<)
+
+infixl 6 <@>
+
+(<@>) :: DocM e () -> DocM e () -> DocM e ()
+l <@> r =
+  withPrecParens 12 $
+    l <+> withPrecedence 13 r
+
+instance
+  ( Pretty PrettyEnv (AnnLHS phase)
+  , Pretty PrettyEnv (AnnRHS phase)
+  , VarLike (Id phase)
+  , Pretty PrettyEnv (AppLHS phase)
+  , Pretty PrettyEnv (AppRHS phase)
+  , HasBindeeType (LamBindType phase)
+  , VarLike (LamBindName phase)
+  , Pretty PrettyEnv (LamBody phase)
+  , Pretty PrettyEnv (BindeeType (LamBindType phase))
+  , VarLike (PiVarName phase)
+  , HasBindeeType (PiVarType phase)
+  , Pretty PrettyEnv (BindeeType (PiVarType phase))
+  , Pretty PrettyEnv (PiRHS phase)
+  , Pretty PrettyEnv (SuccBody phase)
+  , Pretty PrettyEnv (NatElimRetFamily phase)
+  , Pretty PrettyEnv (NatElimBaseCase phase)
+  , Pretty PrettyEnv (NatElimInductionStep phase)
+  , Pretty PrettyEnv (NatElimInput phase)
+  , Pretty PrettyEnv (VecType phase)
+  , Pretty PrettyEnv (VecLength phase)
+  , Pretty PrettyEnv (NilType phase)
+  , Pretty PrettyEnv (ConsType phase)
+  , Pretty PrettyEnv (ConsLength phase)
+  , Pretty PrettyEnv (ConsHead phase)
+  , Pretty PrettyEnv (ConsTail phase)
+  , Pretty PrettyEnv (VecElimEltType phase)
+  , Pretty PrettyEnv (VecElimRetFamily phase)
+  , Pretty PrettyEnv (VecElimBaseCase phase)
+  , Pretty PrettyEnv (VecElimInductiveStep phase)
+  , Pretty PrettyEnv (VecElimLength phase)
+  , Pretty PrettyEnv (VecElimInput phase)
+  , Pretty PrettyEnv (RecordFieldType phase)
+  , Pretty PrettyEnv (RecordField phase)
+  , Pretty PrettyEnv (ProjFieldRecord phase)
+  , Pretty PrettyEnv (OpenRecord phase)
+  , Pretty PrettyEnv (OpenBody phase)
+  , Pretty PrettyEnv (XExpr phase)
+  ) =>
+  Pretty PrettyEnv (Expr phase)
+  where
+  pretty (Ann _ l r) =
+    withPrecParens 10 $
+      withPrecedence 11 (pretty l) <+> colon <+> pretty r
+  pretty Star {} = char '★'
+  pretty (Var _ v) = text . fromMaybe "x" =<< varName v
+  pretty (App _ l r) = pretty l <@> pretty r
+  pretty (Lam _ mv mp body) = withPrecParens 4 $ do
+    let mArgTy = bindeeType mp
+    var <- fromMaybe "x" <$> varName mv
+    lvl <- views (#levels . at var) (fromMaybe 0)
+    let varN
+          | lvl > 0 = text var <> "_" <> pretty lvl
+          | otherwise = text var
+    hang
+      ( ( char 'λ'
+            <+> appWhen
+              (isJust mArgTy)
+              parens
+              ( varN <+> forM_ mArgTy \ty ->
+                  colon <+> pretty ty
+              )
         )
-        $ HM.lookup f flds
-    VNeutral n -> VNeutral $ NProjField n f
-    v ->
-      error $
-        "Impossible: non-evaulable record field projection: "
-          <> show (f, quote 0 v)
-
-evalVecElim :: Value -> Value -> Value -> Value -> Value -> Value -> Value
-evalVecElim aVal mVal mnilVal mconsVal =
-  fix $ \recur kVal xsVal ->
-    case xsVal of
-      VNil _ -> mnilVal
-      VCons _ l x xs -> vapps [mconsVal, l, x, xs, recur l xs]
-      VNeutral n ->
-        VNeutral $ NVecElim aVal mVal mnilVal mconsVal kVal n
-      _ -> error "Impossible: non-evaluatable VecElim case."
-
-evalNatElim :: Value -> Value -> Value -> Value -> Value
-evalNatElim mVal mzVal msVal = fix $ \recur kVal ->
-  case kVal of
-    VZero -> mzVal
-    VSucc l -> msVal @@ l @@ recur l
-    VNeutral nk ->
-      VNeutral $
-        NNatElim mVal mzVal msVal nk
-    _ -> error "internal: eval natElim failed!"
-
-infixl 9 @@
-
-(@@) :: Value -> Value -> Value
-VLam f @@ r = f r
-VNeutral neu @@ r = VNeutral (NApp neu r)
-l @@ r = error $ "Could not apply: " <> show (quote 0 l, quote 0 r)
-
-evalChk :: Env -> Term 'Checkable -> Value
-evalChk ctx (Inf te) = evalInf ctx te
-evalChk ctx (Lam e) = VLam $ \x -> evalChk (ctx & #localBinds %~ (x <|)) e
-evalChk ctx (MkRecord recs) =
-  VRecord $ HM.fromList $ map (Bi.second $ evalChk ctx) recs
-
-type Context = HashMap Name (Maybe Value, Type)
-
-type Result = Either String
-
-typeInfer :: Int -> Context -> Term 'Inferable -> Result Type
-typeInfer !i ctx (e ::: rho) = do
-  typeCheck i ctx rho VStar
-  let !t =
-        evalChk (toEvalContext ctx) rho
-  typeCheck i ctx e t
-  pure t
-typeInfer _ _ Star = pure VStar
-typeInfer _ _ Nat = pure VStar
-typeInfer _ _ Zero = pure VNat
-typeInfer i ctx (Succ k) = VNat <$ typeCheck i ctx k VNat
-typeInfer i ctx (NatElim m mz ms k) = do
-  typeCheck i ctx m $ VPi VNat $ const VStar
-  let mVal = evalChk (toEvalContext ctx) m
-  typeCheck i ctx mz $ mVal @@ VZero
-  typeCheck i ctx ms $
-    VPi VNat $ \l ->
-      VPi (mVal @@ l) $ const $ mVal @@ VSucc l
-  typeCheck i ctx k VNat
-  let kVal = evalChk (toEvalContext ctx) k
-  pure $ mVal @@ kVal
-typeInfer i ctx (Vec a k) =
-  VStar <$ typeCheck i ctx a VStar <* typeCheck i ctx k VNat
-typeInfer i ctx (Nil a) =
-  VVec (evalChk (toEvalContext ctx) a) VZero <$ typeCheck i ctx a VStar
-typeInfer i ctx (Cons a n x xs) = do
-  let ctx' = toEvalContext ctx
-      aVal = evalChk ctx' a
-      nVal = evalChk ctx' n
-  typeCheck i ctx n VNat
-  typeCheck i ctx a VStar
-  typeCheck i ctx x aVal
-  typeCheck i ctx xs $ VVec aVal nVal
-  pure $ VVec aVal $ VSucc nVal
-typeInfer i ctx (Variant vars) =
-  VStar
-    <$ traverse_ (flip (typeCheck i ctx) VStar . snd) vars
-typeInfer i ctx (Record flds) =
-  VStar
-    <$ traverse_ (flip (typeCheck i ctx) VStar . snd) flds
-typeInfer i ctx (VecElim a m mnil mcons n vs) = do
-  let ctx' = toEvalContext ctx
-  typeCheck i ctx a VStar
-  let aVal = evalChk ctx' a
-  typeCheck i ctx m $
-    VPi VNat $ \k ->
-      VPi (VVec aVal k) $ const VStar
-  let mVal = evalChk ctx' m
-  typeCheck i ctx mnil $
-    vapps [mVal, VZero, VNil aVal]
-  typeCheck i ctx mcons $
-    VPi VNat $ \k ->
-      VPi aVal $ \y ->
-        VPi (VVec aVal k) $ \ys ->
-          VPi (vapps [mVal, k, ys]) $
-            const $
-              vapps [mVal, VSucc k, VCons aVal k y ys]
-  typeCheck i ctx n VNat
-  let nVal = evalChk ctx' n
-  typeCheck i ctx vs $ VVec aVal nVal
-  let vsVal = evalChk ctx' vs
-  pure $ vapps [mVal, nVal, vsVal]
-typeInfer i ctx (LamAnn ty body) = do
-  let ctx' = toEvalContext ctx
-  typeCheck i ctx ty VStar
-  let tyVal = evalChk ctx' ty
-  bodyTy <-
-    typeInfer (i + 1) (HM.insert (Local i) (Nothing, tyVal) ctx) $
-      substInf 0 (Free (Local i)) body
-  pure $
-    VPi tyVal $ \v ->
-      substLocal i v bodyTy
-typeInfer _ ctx (Free x) = case HM.lookup x ctx of
-  Just (_, t) -> pure t
-  Nothing -> Left $ "Unknown identifier: " <> show x
-typeInfer !i ctx (Pi rho rho') = do
-  typeCheck i ctx rho VStar
-  let ctx' = toEvalContext ctx
-      t = evalChk ctx' rho
-  typeCheck
-    (i + 1)
-    (HM.insert (Local i) (Nothing, t) ctx)
-    (substChk 0 (Free (Local i)) rho')
-    VStar
-  pure VStar
-typeInfer !i ctx (e :@: e') = do
-  let ctx' = toEvalContext ctx
-  typeInfer i ctx e >>= \case
-    VPi t t' -> do
-      typeCheck i ctx e' t
-      pure $ t' $ evalChk ctx' e'
-    ty ->
-      Left $
-        "LHS of application must be has a function type, but got: "
-          <> show (e, quote 0 ty)
-typeInfer _ _ bd@Bound {} =
-  Left $ "Impossible: the type-checker encounters a bound variable: " <> show bd
-typeInfer !i ctx (e :#: f) = do
-  typeInfer i ctx e >>= \case
-    VRecord flds ->
-      case HM.lookup f flds of
-        Just ty -> pure ty
-        Nothing ->
-          Left $
-            "Record doesn't have the required field `"
-              <> T.unpack f
-              <> "': "
-              <> show (map fst $ toOrderedList flds)
-    ty ->
-      Left $
-        "LHS of record projection must be record, but got: "
-          <> show (e, quote 0 ty)
-
-toEvalContext :: Context -> Env
-toEvalContext ctx =
-  mempty
-    & #namedBinds
-      .~ HM.fromList [(a, v) | (Global a, (Just v, _)) <- HM.toList ctx]
-
-vapps :: NonEmpty Type -> Type
-vapps = foldl1' (@@) . NE.toList
-
-typeCheck :: Int -> Context -> Term 'Checkable -> Type -> Result ()
-typeCheck !i ctx (Inf e) v = do
-  v' <- typeInfer i ctx e
-  unless (quote 0 v == quote 0 v') $
-    Left $
-      "Type mismatch (inf); (term, expected, actual) = ("
-        <> prettyInfPrec
-          i
-          10
-          e
-          ( showString ", " $
-              prettyChkPrec i 10 (quote i v) $
-                showString ", " $
-                  prettyChkPrec i 10 (quote i v') ")"
-          )
-        <> "; in context: "
-        <> show ctx
-typeCheck !i ctx (Lam e) (VPi ty ty') = do
-  typeCheck
-    (i + 1)
-    (HM.insert (Local i) (Nothing, ty) ctx)
-    (substChk 0 (Free (Local i)) e)
-    $ ty'
-    $ vfree
-    $ Local i
-typeCheck _ _ e ty =
-  Left $ "Type check failed: " <> show (e, quote 0 ty)
-
-substInf :: Int -> Term 'Inferable -> Term 'Inferable -> Term 'Inferable
-substInf !i r (e ::: ty) = substChk i r e ::: substChk i r ty
-substInf i r (LamAnn t e) = LamAnn (substChk i r t) $ substInf (i + 1) r e
-substInf _ _ Nat = Nat
-substInf _ _ Zero = Zero
-substInf i r (Succ k) = Succ $ substChk i r k
-substInf i r (NatElim m mz ms k) =
-  NatElim (substChk i r m) (substChk i r mz) (substChk i r ms) (substChk i r k)
-substInf i r (Vec a n) = Vec (substChk i r a) (substChk i r n)
-substInf i r (Nil a) = Nil (substChk i r a)
-substInf i r (Cons a n x xs) =
-  Cons (substChk i r a) (substChk i r n) (substChk i r x) (substChk i r xs)
-substInf i r (VecElim a m mn mc k vk) =
-  VecElim (substChk i r a) (substChk i r m) (substChk i r mn) (substChk i r mc) (substChk i r k) (substChk i r vk)
-substInf i r (Variant vars) = Variant $ map (Bi.second $ substChk i r) vars
-substInf i r (Record flds) = Record $ map (Bi.second $ substChk i r) flds
-substInf _ _ Star = Star
-substInf i r (Pi t t') = Pi (substChk i r t) (substChk (i + 1) r t')
-substInf !i r bd@(Bound j)
-  | i == j = r
-  | otherwise = bd
-substInf _ _ f@Free {} = f
-substInf !i r (e :@: e') =
-  substInf i r e :@: substChk i r e'
-substInf !i r (e :#: f) = substInf i r e :#: f
-
-substChk :: Int -> Term 'Inferable -> Term 'Checkable -> Term 'Checkable
-substChk !i r (Inf e) = Inf $ substInf i r e
-substChk !i r (Lam e) = Lam $ substChk (i + 1) r e
-substChk !i r (MkRecord flds) = MkRecord $ map (Bi.second $ substChk i r) flds
-
-substLocal :: Int -> Value -> Type -> Value
-substLocal i v (VLam f) = VLam $ substLocal i v . f
-substLocal _ _ VStar = VStar
-substLocal _ _ VNat = VNat
-substLocal _ _ VZero = VZero
-substLocal i v (VSucc va) = VSucc $ substLocal i v va
-substLocal i v (VPi va f) =
-  VPi (substLocal i v va) $ substLocal i v . f
-substLocal i v (VNeutral neu) =
-  either VNeutral id $ substLocalNeutral i v neu
-substLocal i v (VVec va va') = VVec (substLocal i v va) (substLocal i v va')
-substLocal i v (VNil va) = VNil $ substLocal i v va
-substLocal i v (VCons va va' va2 va3) =
-  VCons (substLocal i v va) (substLocal i v va') (substLocal i v va2) (substLocal i v va3)
-substLocal i v (VVariant vars) = VVariant $ fmap (substLocal i v) vars
-substLocal i v (VRecord flds) = VRecord $ fmap (substLocal i v) flds
-substLocal i v (VMkRecord flds) = VMkRecord $ fmap (substLocal i v) flds
-
-substLocalNeutral :: Int -> Value -> Neutral -> Either Neutral Value
-substLocalNeutral i v (NFree (Local j))
-  | i == j = Right v
-substLocalNeutral _ _ neu@NFree {} = Left neu
-substLocalNeutral i v (NApp neu' va) =
-  let va' = substLocal i v va
-   in (`NApp` va') +++ (@@ va') $
-        substLocalNeutral i v neu'
-substLocalNeutral i v (NNatElim f f0 fsucc neuK) =
-  let f' = substLocal i v f
-      f0' = substLocal i v f0
-      fsucc' = substLocal i v fsucc
-   in NNatElim f' f0' fsucc' +++ evalNatElim f' f0' fsucc' $
-        substLocalNeutral i v neuK
-substLocalNeutral i v (NVecElim a f fnil fcons k kv) =
-  let aVal = substLocal i v a
-      fVal = substLocal i v f
-      fnilVal = substLocal i v fnil
-      fconsVal = substLocal i v fcons
-      kVal = substLocal i v k
-   in NVecElim aVal fVal fnilVal fconsVal kVal
-        +++ evalVecElim aVal fVal fnilVal fconsVal kVal
-        $ substLocalNeutral i v kv
-substLocalNeutral i v (NProjField r f) =
-  case substLocalNeutral i v r of
-    Right rec -> Right $ evalProjField f rec
-    Left n -> Left $ NProjField n f
-
-quote :: Int -> Value -> Term 'Checkable
-quote i (VLam f) = Lam $ quote (i + 1) $ f $ vfree $ Quote i
-quote _ VStar = Inf Star
-quote _ VNat = Inf Nat
-quote _ VZero = Inf Zero
-quote i (VSucc k) = Inf $ Succ $ quote i k
-quote i (VVec a n) = Inf $ Vec (quote i a) (quote i n)
-quote i (VNil a) = Inf $ Nil (quote i a)
-quote i (VCons a n x xs) = Inf $ Cons (quote i a) (quote i n) (quote i x) (quote i xs)
-quote i (VPi v f) =
-  Inf $ Pi (quote i v) $ quote (i + 1) $ f $ vfree $ Quote i
-quote i (VNeutral n) = Inf $ quoteNeutral i n
-quote i (VVariant vars) = Inf $ Variant $ toOrderedList $ fmap (quote i) vars
-quote i (VRecord flds) = Inf $ Record $ HM.toList $ fmap (quote i) flds
-quote i (VMkRecord flds) = MkRecord $ HM.toList $ fmap (quote i) flds
-
-toOrderedList :: HashMap Text a -> [(Text, a)]
-toOrderedList = HM.toList >>> sortOn fst
-
-quoteNeutral :: Int -> Neutral -> Term 'Inferable
-quoteNeutral i (NFree x) = boundFree i x
-quoteNeutral i (NApp n v) = quoteNeutral i n :@: quote i v
-quoteNeutral i (NNatElim m mz ms k) =
-  NatElim (quote i m) (quote i mz) (quote i ms) $
-    Inf $
-      quoteNeutral i k
-quoteNeutral i (NVecElim a m mz ms k xs) =
-  VecElim (quote i a) (quote i m) (quote i mz) (quote i ms) (quote i k) $
-    Inf $
-      quoteNeutral i xs
-quoteNeutral i (NProjField r f) = quoteNeutral i r :#: f
-
-boundFree :: Int -> Name -> Term 'Inferable
-boundFree i (Quote k) = Bound $ i - k - 1
-boundFree _ x = Free x
-
-pattern Pi' :: Term 'Checkable -> Term 'Checkable -> Term 'Checkable
-pattern Pi' l r = Inf (Pi l r)
-
-pattern Star' :: Term 'Checkable
-pattern Star' = Inf Star
-
-pattern Bound' :: Int -> Term 'Checkable
-pattern Bound' i = Inf (Bound i)
-
-pattern Free' :: Name -> Term 'Checkable
-pattern Free' i = Inf (Free i)
-
-id' :: Term 'Inferable
-id' = Lam (Lam $ Bound' 0) ::: Pi' Star' (Pi' (Bound' 0) (Bound' 1))
-
-typeEnv :: Context
-typeEnv = HM.fromList [(Global "a", (Nothing, VStar)), (Global "x", (Nothing, vfree $ Global "a")), (Global "y", (Nothing, vfree $ Global "a"))]
-
-pattern Nat' :: Term 'Checkable
-pattern Nat' = Inf Nat
-
-pattern Succ' :: Term 'Checkable -> Term 'Checkable
-pattern Succ' n = Inf (Succ n)
-
-pattern Zero' :: Term 'Checkable
-pattern Zero' = Inf Zero
-
-plus' :: Term 'Inferable
-plus' =
-  LamAnn
-    Nat'
-    ( NatElim
-        (Lam $ Pi' Nat' Nat')
-        (Lam $ Bound' 0)
-        ( Lam $
-            Lam $
-              Lam $
-                Succ' $
-                  Inf $
-                    Bound 1 :@: Bound' 0
+          <> char '.'
+      )
+      2
+      $ local
+        ( #levels . at var ?~ (lvl + 1)
+            >>> #boundVars %~ (Seq.<|) (var, lvl)
         )
-        (Bound' 0)
-    )
-
-pattern Cons' ::
-  Term 'Checkable ->
-  Term 'Checkable ->
-  Term 'Checkable ->
-  Term 'Checkable ->
-  Term 'Checkable
-pattern Cons' a b x xs = Inf (Cons a b x xs)
-
-pattern Vec' :: Term 'Checkable -> Term 'Checkable -> Term 'Checkable
-pattern Vec' a b = Inf (Vec a b)
-
-type Level = Int
-
-prettyInfPrec :: Level -> Int -> Term 'Inferable -> ShowS
-prettyInfPrec lvl _ (te ::: te') =
-  showParen True $
-    prettyChkPrec lvl 11 te . showString " :: " . prettyChkPrec lvl 10 te'
-prettyInfPrec _ _ Star = showString "Type"
-prettyInfPrec lvl d (LamAnn te te') =
-  showParen (d > 4) $
-    showString "λ(x_"
-      . shows lvl
-      . showString " : "
-      . prettyChkPrec lvl d te
-      . showString "). "
-      . prettyInfPrec (lvl + 1) 4 te'
-prettyInfPrec lvl d (Pi te te')
-  | occursChk 0 te' =
-      showParen (d > 4) $
-        showString "Π(x_"
-          . shows lvl
-          . showString " : "
-          . prettyChkPrec lvl 4 te
-          . showString "). "
-          . prettyChkPrec (lvl + 1) 4 te'
-  | otherwise =
-      showParen (d > 5) $
-        prettyChkPrec lvl 6 te
-          . showString " -> "
-          . prettyChkPrec (lvl + 1) 5 te'
-prettyInfPrec lvl d (NatElim te te' te2 te3) =
-  showParen (d > 10) $
-    showString "natElim"
-      . showChar ' '
-      . prettyChkPrec lvl 11 te
-      . showChar ' '
-      . prettyChkPrec lvl 11 te'
-      . showChar ' '
-      . prettyChkPrec lvl 11 te2
-      . showChar ' '
-      . prettyChkPrec lvl 11 te3
-prettyInfPrec lvl _ (Bound n) =
-  showString "x_" . shows (lvl - n - 1)
-prettyInfPrec lvl _ (Free na) = prettyName lvl na
-prettyInfPrec lvl d (te :@: te') =
-  showParen (d > 10) $
-    prettyInfPrec lvl 10 te
-      . showChar ' '
-      . prettyChkPrec lvl 11 te'
-prettyInfPrec _ _ Nat = showString "ℕ"
-prettyInfPrec _ _ Zero = showString "0"
-prettyInfPrec lvl d sc@(Succ te) =
-  case prettyAsNat sc of
-    Just n -> shows n
-    _ ->
-      showParen (d > 10) $
-        showString "succ " . prettyChkPrec lvl 11 te
-prettyInfPrec lvl d (Vec te te') =
-  showParen (d > 10) $
-    showString "Vec "
-      . prettyChkPrec lvl 11 te
-      . showChar ' '
-      . prettyChkPrec lvl 11 te'
-prettyInfPrec lvl d (Nil te) =
-  showParen (d > 10) $
-    showString "nil " . prettyChkPrec lvl 11 te
-prettyInfPrec lvl d (Cons te te' te2 te3) =
-  showParen (d > 10) $
-    showString "cons"
-      . showChar ' '
-      . prettyChkPrec lvl 11 te
-      . showChar ' '
-      . prettyChkPrec lvl 11 te'
-      . showChar ' '
-      . prettyChkPrec lvl 11 te2
-      . showChar ' '
-      . prettyChkPrec lvl 11 te3
-prettyInfPrec lvl d (VecElim te te' te2 te3 te4 te5) =
-  showParen (d > 10) $
-    showString "vecElim"
-      . showChar ' '
-      . prettyChkPrec lvl 11 te
-      . showChar ' '
-      . prettyChkPrec lvl 11 te'
-      . showChar ' '
-      . prettyChkPrec lvl 11 te2
-      . showChar ' '
-      . prettyChkPrec lvl 11 te3
-      . showChar ' '
-      . prettyChkPrec lvl 11 te4
-      . showChar ' '
-      . prettyChkPrec lvl 11 te5
-prettyInfPrec lvl _ (Variant vars) =
-  showString "(| "
-    . appEndo
-      ( maybe
-          mempty
-          ( intercalateMap1 (Endo $ showString " | ") $ \(cnstr, typ) ->
-              Endo $
-                showString (T.unpack cnstr)
-                  . showString " : "
-                  . prettyChkPrec lvl 0 typ
-          )
-          $ NE.nonEmpty vars
+        (pretty body)
+  pretty (Pi _ mv mp body) = withPrecParens 4 $ do
+    -- TODO: check occurrence of mv in body and
+    -- use arrows if absent!
+    let mArgTy = bindeeType mp
+    var <- fromMaybe "x" <$> varName mv
+    lvl <- views (#levels . at var) (fromMaybe 0)
+    let varN
+          | lvl > 0 = text var <> "_" <> pretty lvl
+          | otherwise = text var
+    hang
+      ( ( char 'Π'
+            <+> appWhen
+              (isJust mArgTy)
+              parens
+              ( varN <+> forM_ mArgTy \ty ->
+                  colon <+> pretty ty
+              )
+        )
+          <> char '.'
       )
-    . showString " |)"
-prettyInfPrec lvl _ (Record flds) =
-  showString "{ "
-    . appEndo
-      ( maybe
-          mempty
-          ( intercalateMap1 (Endo $ showString " , ") $ \(cnstr, typ) ->
-              Endo $
-                showString (T.unpack cnstr)
-                  . showString " : "
-                  . prettyChkPrec lvl 0 typ
-          )
-          $ NE.nonEmpty flds
-      )
-    . showString " }"
-prettyInfPrec lvl _ (e :#: f) =
-  prettyInfPrec lvl 11 e <> showChar '#' <> showString (T.unpack f)
+      2
+      $ local
+        ( #levels . at var ?~ lvl + 1
+            >>> #boundVars %~ (Seq.<|) (var, lvl)
+        )
+        (pretty body)
+  pretty Nat {} = text "ℕ"
+  pretty Zero {} = text "0"
+  -- FIXME: compress numerals
+  pretty (Succ _ e) = text "succ" <@> pretty e
+  pretty (NatElim _ t b i n) =
+    text "natElim" <@> pretty t <@> pretty b <@> pretty i <@> pretty n
+  pretty (Vec _ a n) =
+    text "Vec" <@> pretty a <@> pretty n
+  pretty (Nil _ a) =
+    text "nil" <@> pretty a
+  pretty (Cons _ a n x xs) =
+    text "cons" <@> pretty a <@> pretty n <@> pretty x <@> pretty xs
+  pretty (VecElim _ a t b i n xs) =
+    text "vecElim"
+      <@> pretty a
+      <@> pretty t
+      <@> pretty b
+      <@> pretty i
+      <@> pretty n
+      <@> pretty xs
+  pretty (Record _ (RecordFieldTypes flds)) =
+    braces $
+      sep $
+        punctuate
+          comma
+          [ text f <+> colon <+> pretty e
+          | (f, e) <- flds
+          ]
+  pretty (MkRecord _ (MkRecordFields flds)) =
+    "record"
+      <+> braces
+        ( sep $
+            punctuate
+              comma
+              [ text f <+> equals <+> pretty e
+              | (f, e) <- flds
+              ]
+        )
+  pretty (ProjField _ e fld) =
+    withPrecParens 12 (pretty e <> "#" <> text fld)
+  pretty (Open _ recd body) =
+    withPrecParens 11 $
+      "open" <+> pretty recd <+> "{..}" <+> "in" <+> pretty body
+  pretty (XExpr e) = pretty e
 
-prettyAsNat :: Term 'Inferable -> Maybe Natural
-prettyAsNat Zero = Just 0
-prettyAsNat (Succ (Inf n)) = succ <$> prettyAsNat n
-prettyAsNat _ = Nothing
+instance Pretty PrettyEnv (XExprTyping m) where
+  pretty (BVar i) = do
+    mtn <- preview $ #boundVars . ix i
+    case mtn of
+      Just (t, n)
+        | n > 0 -> text t <> char '_' <> int n
+        | otherwise -> text t
+      Nothing -> "<<Global:" <> pretty i <> ">>"
+  pretty (Inf e) = pretty e
 
-prettyName :: Level -> Name -> ShowS
-prettyName _ (Global s) = showString $ T.unpack s
-prettyName lvl (Local n) = showString "x_" . shows (lvl - n - 1)
-prettyName _ Quote {} = error "Could not happen!"
+pprint :: Pretty PrettyEnv a => a -> Doc
+pprint = execDocM (mempty @PrettyEnv) . pretty
 
-prettyChkPrec :: Level -> Int -> Term 'Checkable -> ShowS
-prettyChkPrec lvl d (Inf te') = prettyInfPrec lvl d te'
-prettyChkPrec lvl d (Lam te') =
-  showParen (d > 4) $
-    showString "λx_"
-      . shows lvl
-      . showString ". "
-      . prettyChkPrec (lvl + 1) 4 te'
-prettyChkPrec lvl _ (MkRecord flds) =
-  showString "{ "
-    . appEndo
-      ( maybe
-          mempty
-          ( intercalateMap1 (Endo $ showString " , ") $ \(cnstr, typ) ->
-              Endo $
-                showString (T.unpack cnstr)
-                  . showString " = "
-                  . prettyChkPrec lvl 0 typ
-          )
-          $ NE.nonEmpty flds
-      )
-    . showString " }"
-
+{-
 occursChk :: Int -> Term 'Checkable -> Bool
 occursChk i (Inf te') = occursInf i te'
 occursChk i (Lam te') = occursChk (i + 1) te'
@@ -750,92 +1047,4 @@ occursInf i (Variant vars) = any (occursChk i . snd) vars
 occursInf i (Record flds) = any (occursChk i . snd) flds
 occursInf i (e :#: _) = occursInf i e
 
-natElim' :: Term 'Inferable
-natElim' =
-  LamAnn (Pi' Nat' Star')
-    $ LamAnn (Inf $ Bound 0 :@: Zero')
-    $ LamAnn
-      ( Pi'
-          Nat'
-          ( Pi'
-              (Inf $ Bound 2 :@: Bound' 0)
-              (Inf $ Bound 3 :@: Inf (Succ (Bound' 1)))
-          )
-      )
-    $ LamAnn Nat'
-    $ NatElim (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
-
--- >>> typeInfer 0 mempty natElim
--- Right (Π(x_0 : Π(x_0 : ℕ). *). Π(x_1 : x_0 0). Π(x_2 : Π(x_2 : ℕ). Π(x_3 : x_0 x_2). x_0 (succ x_2)). Π(x_3 : ℕ). x_0 x_3)
-
-vecElim' :: Term 'Inferable
-vecElim' =
-  LamAnn Star'
-    $ LamAnn (Pi' Nat' $ Pi' (Vec' (Bound' 1) (Bound' 0)) Star')
-    $ LamAnn
-      (Inf $ Bound 0 :@: Zero' :@: Inf (Nil (Bound' 1)))
-    $ LamAnn
-      ( Pi' Nat' $
-          Pi' (Bound' 3) $
-            Pi' (Vec' (Bound' 4) (Bound' 1)) $
-              Pi' (Inf $ Bound 4 :@: Bound' 2 :@: Bound' 0) $
-                Inf $
-                  Bound 5
-                    :@: Succ' (Bound' 3)
-                    :@: Cons' (Bound' 6) (Bound' 3) (Bound' 2) (Bound' 1)
-      )
-    $ LamAnn Nat'
-    $ LamAnn (Vec' (Bound' 4) (Bound' 0))
-    $ VecElim (Bound' 5) (Bound' 4) (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
-
--- >>> typeInfer 0 mempty vecElim'
--- Right (Π(x_0 : *). Π(x_1 : Π(x_1 : ℕ). Π(x_2 : Vec x_0 x_1). *). Π(x_2 : x_1 0 (nil x_0)). Π(x_3 : Π(x_3 : ℕ). Π(x_4 : x_0). Π(x_5 : Vec x_0 x_3). Π(x_6 : x_1 x_3 x_5). x_1 (succ x_3) (cons x_0 x_3 x_4 x_5)). Π(x_4 : ℕ). Π(x_5 : Vec x_0 x_4). x_1 x_4 x_5)
-
-vecCon' :: Term 'Inferable
-vecCon' = LamAnn Star' $ LamAnn Nat' $ Vec (Bound' 1) (Bound' 0)
-
-cons' :: Term 'Inferable
-cons' =
-  LamAnn
-    Star'
-    $ LamAnn Nat'
-    $ LamAnn (Bound' 1)
-    $ LamAnn (Vec' (Bound' 2) (Bound' 1))
-    $ Cons (Bound' 3) (Bound' 2) (Bound' 1) (Bound' 0)
-
--- >>> typeInfer 0 mempty cons'
--- Right (Π(x_0 : *). Π(x_1 : ℕ). Π(x_2 : x_0). Π(x_3 : Vec x_0 x_1). Vec x_0 (succ x_1))
-
-tryInferTypeWith :: Context -> Term 'Checkable -> Result Type
-tryInferTypeWith ctx (Inf te) = typeInfer 0 ctx te
-tryInferTypeWith _ te@Lam {} =
-  Left $
-    "A type of a raw lambda cannot be inferred: "
-      <> prettyChkPrec 0 10 te ""
-tryInferTypeWith ctx (MkRecord flds) = do
-  let dups =
-        sort $
-          map fst $
-            filter ((> 1) . snd) $
-              HM.toList $
-                HM.fromListWith ((+) @Int) $
-                  map (0 <$) flds
-  unless (null dups) $
-    Left $
-      "Following field(s) ocuurred more than once: " <> show flds
-  VRecord . HM.fromList <$> traverse (secondA $ tryInferTypeWith ctx) flds
-
-tryEvalWith :: Context -> Env -> Term 'Checkable -> Result (Value, Type)
-tryEvalWith _Γ ctx e = do
-  !typ <- tryInferTypeWith _Γ e
-  pure (evalChk ctx e, typ)
-
-tryEvalAs :: Term 'Checkable -> Term 'Checkable -> Result Value
-tryEvalAs e ty = do
-  typeCheck 0 mempty ty VStar
-  let tyVal = evalChk mempty ty
-  typeCheck 0 mempty e tyVal
-  pure $ evalChk mempty e
-
--- >>> cons'
--- LamAnn (Inf Star) (LamAnn (Inf Nat) (LamAnn (Inf (Bound 1)) (LamAnn (Inf (Vec (Inf (Bound 2)) (Inf (Bound 1)))) (Cons (Inf (Bound 3)) (Inf (Bound 2)) (Inf (Bound 1)) (Inf (Bound 0))))))
+-}

@@ -2,10 +2,10 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.RenameSpec where
+module Language.Lambda.Syntax.LambdaPi.RenameSpec where
 
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename
+import Language.Lambda.Syntax.LambdaPi
+import Language.Lambda.Syntax.LambdaPi.Rename
 import Test.Tasty
 import Test.Tasty.HUnit
 

@@ -2,31 +2,42 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TupleSections #-}
 
-module Language.Lambda.Syntax.LambdaPi.Parser where
+module Language.Lambda.Syntax.LambdaPi.Parser (
+  exprP,
+  Parser,
+  parseOnly,
+  parseNamed,
+
+  -- * Misc
+  space,
+  symbol,
+  operator,
+  identifier,
+  binders,
+  reservedOp,
+  reserved,
+  keywords,
+  reservedOpNames,
+) where
 
 import Control.Applicative (Alternative (..))
 import Control.Applicative.Combinators (sepBy)
 import qualified Control.Applicative.Combinators.NonEmpty as NE
 import Control.Arrow ((+++))
-import Control.Monad (unless, when)
-import Control.Monad.Combinators.Expr.HigherKinded
-import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, local)
+import Control.Monad
+import Control.Monad.Combinators.Expr
 import qualified Data.Bifunctor as Bi
-import Data.Bifunctor.Biff (Biff (..))
-import Data.Char (GeneralCategory (ClosePunctuation), generalCategory, isAlpha, isAlphaNum, isSymbol)
-import qualified Data.Dependent.Map as DMap
-import Data.Functor (void, (<&>))
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HM
+import Data.Char
+import Data.Functor
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
-import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty.Utils as NE
-import qualified Data.Map as Map
+import Data.List (foldl1')
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.Map.Strict as Map
 import Data.Semigroup
-import qualified Data.Set as Set
-import Data.Some (Some (..))
+import Data.Semigroup.Foldable (fold1)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
@@ -36,22 +47,28 @@ import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import qualified Text.Megaparsec.Char.Lexer as L
 
-type VarMap = HashMap Text Int
+type Parser = Parsec Void Text
 
-type Parser = ReaderT VarMap (Parsec Void Text)
+type ParsedExpr = Expr Parse
 
-operators :: [[HOperator SMode Parser Term]]
-operators =
-  [
-    [ infixR theMode theMode theMode $
-        (:::) <$ reservedOp ":"
+exprP :: Parser ParsedExpr
+exprP =
+  makeExprParser
+    termP
+    [
+      [ InfixR $
+          Pi NoExtField Indep
+            <$ (reservedOp "->" <|> reservedOp "→")
+      ]
+    , [InfixR $ Ann NoExtField <$ reservedOp ":"]
+    , [InfixL $ App NoExtField <$ appSpaceP]
+    , [Postfix fieldProjsP]
     ]
-  ,
-    [ InfixR theMode theMode theMode $
-        (~>) <$ (reservedOp "->" <|> reservedOp "→")
-    ]
-  , [infixL theMode theMode theMode $ (:@:) <$ appSpaceP]
-  ]
+
+fieldProjsP :: Parser (ParsedExpr -> ParsedExpr)
+fieldProjsP =
+  appEndo . getDual . fold1
+    <$> NE.some (string "." *> identifier <&> \fld -> Dual $ Endo $ flip (ProjField NoExtField) fld)
 
 appSpaceP :: Parser ()
 appSpaceP =
@@ -63,61 +80,216 @@ appSpaceP =
               || generalCategory ch == ClosePunctuation
       )
 
-(~>) ::
-  Term 'Checkable ->
-  Parser (Term 'Checkable) ->
-  Parser (Term 'Inferable)
-(~>) l p = Pi l <$> anonymousBind p
+termP :: Parser ParsedExpr
+termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> lamP <|> varP <|> parens exprP
 
-reservedOpNames :: HashSet Text
-reservedOpNames = HS.fromList ["->", "→", ":", "#"]
+openP :: Parser ParsedExpr
+openP =
+  label "open expression" $
+    Open NoExtField
+      <$ reserved "open"
+      <*> exprP
+      <* between (symbol "{") (symbol "}") (reserved "..")
+      <* reserved "in"
+      <*> exprP
 
-exprCasters :: CastFunctions SMode Term
-exprCasters = DMap.singleton SInferable (Compose (DMap.singleton SCheckable $ Biff Inf))
+piP :: Parser ParsedExpr
+piP = label "Pi-binding" $ do
+  reserved "Π"
+  bindees <- sconcat <$> NE.some annBinder <* symbol "."
+  foldr
+    (\(v, ty) p -> Pi NoExtField (DepNamed v) ty <$> p)
+    exprP
+    bindees
 
-exprParsers :: ParserDict SMode Parser Term
-exprParsers =
-  makeHExprParser
-    (Set.fromList [Some SInferable, Some SCheckable])
-    exprCasters
-    basicTermParsers
-    operators
+lamP :: Parser ParsedExpr
+lamP = do
+  reserved "λ"
+  bndrs <- binders <* symbol "."
+  foldr
+    (\(v, mty) p -> Lam NoExtField v mty <$> p)
+    exprP
+    bndrs
 
-inferableExprP :: Parser (Term 'Inferable)
-inferableExprP =
-  parserOf exprCasters SInferable exprParsers
-    <?> "inferrable expression"
+binders :: Parser (NonEmpty (Text, Maybe ParsedExpr))
+binders = sconcat <$> NE.some binder
 
-checkableExprP :: Parser (Term 'Checkable)
-checkableExprP =
-  parserOf exprCasters SCheckable exprParsers
-    <?> "checkable expression"
+binder :: Parser (NonEmpty (Text, Maybe ParsedExpr))
+binder =
+  parens
+    ( flip (fmap . flip (,))
+        <$> NE.some identifier
+        <* symbol ":"
+        <*> (Just <$> exprP <?> "variable type")
+    )
+    <|> fmap (,Nothing) <$> NE.some identifier
 
-basicTermParsers :: ParserDict SMode Parser Term
-basicTermParsers =
-  DMap.fromList
-    [ SInferable
-        ~=> label "inferrable term" (atomicInfTerms <|> parens inferableExprP)
-    , SCheckable
-        ~=> label
-          "Checkable term"
-          (try unAnnLamP <|> recordChkP <|> parens checkableExprP)
-    ]
-  where
-    atomicInfTerms =
-      piP
-        <|> primTypeP
-        <|> compoundTyConP
-        <|> datConP
-        <|> eliminatorsP
-        <|> try lamAnnP
-        <|> varP
+annBinder :: Parser (NonEmpty (Text, ParsedExpr))
+annBinder =
+  parens
+    ( flip (fmap . flip (,))
+        <$> NE.some identifier
+        <* symbol ":"
+        <*> exprP
+        <?> "variable type"
+    )
 
-binding :: Text -> Parser a -> Parser a
-binding v = local (HM.insert v 0 . HM.map succ)
+eliminatorsP :: Parser ParsedExpr
+eliminatorsP =
+  natElim' <$ reserved "natElim"
+    <|> vecElim' <$ reserved "vecElim"
+    <|> try openP
 
-anonymousBind :: Parser a -> Parser a
-anonymousBind = local $ HM.map succ
+natElim' :: ParsedExpr
+natElim' =
+  Lam NoExtField "t" (Just (Pi NoExtField Indep nat star))
+    $ Lam NoExtField "base" (Just (App NoExtField (var "t") zero))
+    $ Lam
+      NoExtField
+      "ind"
+      ( Just
+          ( Pi
+              NoExtField
+              (DepNamed "k")
+              nat
+              ( Pi
+                  NoExtField
+                  Indep
+                  (App NoExtField (var "t") (var "k"))
+                  $ App NoExtField (var "t")
+                  $ succ' (var "k")
+              )
+          )
+      )
+    $ Lam NoExtField "n" (Just nat)
+    $ NatElim NoExtField (var "t") (var "base") (var "ind") (var "n")
+
+vecElim' :: ParsedExpr
+vecElim' =
+  Lam NoExtField "a" (Just star)
+    $ Lam
+      NoExtField
+      "t"
+      ( Just $
+          Pi NoExtField (DepNamed "n") nat $
+            Pi
+              NoExtField
+              Indep
+              (Vec NoExtField (var "a") (var "n"))
+              star
+      )
+    $ Lam
+      NoExtField
+      "base"
+      ( Just $ apps [var "t", zero, Nil NoExtField (var "a")]
+      )
+    $ Lam
+      NoExtField
+      "ind"
+      ( Just $
+          Pi NoExtField (DepNamed "n") nat $
+            Pi NoExtField (DepNamed "x") (var "a") $
+              Pi NoExtField (DepNamed "xs") (Vec NoExtField (var "a") (var "n")) $
+                Pi NoExtField Indep (apps [var "t", var "n", var "xs"]) $
+                  apps [var "t", Succ NoExtField (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
+      )
+    $ Lam NoExtField "n" (Just nat)
+    $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
+    $ apps [var "t", var "n", var "xs"]
+
+apps :: [ParsedExpr] -> Expr Parse
+apps = foldl1' (App NoExtField)
+
+dataConP :: Parser ParsedExpr
+dataConP =
+  naturalP
+    <|> Lam NoExtField "t" (Just star) (Nil NoExtField (var "t")) <$ reserved "nil"
+    <|> Zero NoExtField <$ reserved "zero"
+    <|> Lam NoExtField "n" (Just nat) (succ' $ var "n") <$ reserved "succ"
+    <|> cons' <$ reserved "cons"
+    <|> recordP
+
+recordP :: Parser ParsedExpr
+recordP =
+  MkRecord NoExtField
+    <$ reserved "record"
+    <*> between
+      (symbol "{")
+      (symbol "}")
+      (MkRecordFields <$> fieldSeqP "field" (symbol ",") (symbol "="))
+
+cons' :: ParsedExpr
+cons' =
+  Lam
+    NoExtField
+    "t"
+    (Just star)
+    $ Lam NoExtField "n" (Just nat)
+    $ Lam NoExtField "x" (Just (var "t"))
+    $ Lam NoExtField "xs" (Just (Vec NoExtField (var "t") (var "n")))
+    $ Cons NoExtField (var "t") (var "n") (var "x") (var "xs")
+
+var :: Text -> ParsedExpr
+var = Var NoExtField
+
+naturalP :: Parser ParsedExpr
+naturalP =
+  lexeme decimal <&> \n ->
+    foldr ($) zero (replicate n succ')
+
+succ' :: ParsedExpr -> ParsedExpr
+succ' = Succ NoExtField
+
+zero :: ParsedExpr
+zero = Zero NoExtField
+
+nat :: Expr Parse
+nat = Nat NoExtField
+
+star :: Expr Parse
+star = Star NoExtField
+
+compoundTyConP :: Parser ParsedExpr
+compoundTyConP =
+  vecCon' <$ reserved "Vec"
+    <|> try (between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":")))
+
+fieldSeqP ::
+  String ->
+  Parser fieldSeparator ->
+  Parser fieldAndTypeSep ->
+  Parser [(Text, ParsedExpr)]
+fieldSeqP tokenName sep fldSep = do
+  flds <-
+    ( (,)
+        <$> (identifier <?> tokenName)
+        <* fldSep
+        <*> exprP
+      )
+      `sepBy` sep
+  let dups =
+        map fst $
+          filter ((> 1) . snd) $
+            Map.toList $
+              Map.fromListWith (+) $
+                map (Bi.second $ const (1 :: Int)) flds
+  unless (null dups) $
+    fail $
+      "Following field(s) occurred more than once: "
+        <> show dups
+  pure flds
+
+vecCon' :: ParsedExpr
+vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
+
+varP :: Parser ParsedExpr
+varP = Var NoExtField <$> identifier
+
+primTypeP :: Parser ParsedExpr
+primTypeP =
+  label "Primitive type" $
+    Star NoExtField <$ (reserved "Type" <|> reserved "★")
+      <|> Nat NoExtField <$ (reserved "ℕ" <|> reserved "Nat")
 
 space :: Parser ()
 space =
@@ -127,7 +299,7 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record"]
+keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'
@@ -182,125 +354,13 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
 parens :: Parser a -> Parser a
-parens = between (symbol "(" {- <* notFollowedBy (symbol "|") -}) (symbol ")")
+parens = between (symbol "(" <* notFollowedBy (symbol "|")) (symbol ")")
 
 symbol :: Text -> Parser Text
 symbol = L.symbol space
 
-primTypeP :: Parser (Term 'Inferable)
-primTypeP =
-  label "Primitive type" $
-    Star <$ (reserved "Type" <|> reserved "★")
-      <|> Nat <$ (reserved "ℕ" <|> reserved "Nat")
-
-varP :: Parser (Term 'Inferable)
-varP = do
-  ident <- identifier <?> "variable"
-  mb <- asks (HM.lookup ident)
-  pure $ case mb of
-    Just i -> Bound i
-    Nothing -> Free $ Global ident
-
-binder :: Parser (NonEmpty (Text, Term 'Checkable))
-binder =
-  parens
-    ( flip (fmap . flip (,))
-        <$> NE.some identifier
-        <* symbol ":"
-        <*> (checkableExprP <?> "variable type")
-    )
-
-binders :: Parser (NonEmpty (Text, Term 'Checkable))
-binders = sconcat <$> NE.some binder
-
-lamAnnP :: Parser (Term 'Inferable)
-lamAnnP = label "Typed lambda abstraction" $ do
-  reserved "λ"
-  bindees <- binders <* symbol "."
-  foldr (\(var, ty) p -> binding var $ LamAnn ty <$> p) inferableExprP bindees
-
-piP :: Parser (Term 'Inferable)
-piP = label "Pi-binding" $ do
-  reserved "Π"
-  bindees <- binders <* symbol "."
-  let (half, (var0, ty0)) = NE.unsnoc bindees
-  foldr
-    (\(var, ty) p -> binding var $ Pi ty . Inf <$> p)
-    (binding var0 $ Pi ty0 <$> checkableExprP)
-    half
-
-eliminatorsP :: Parser (Term 'Inferable)
-eliminatorsP =
-  natElim' <$ reserved "natElim"
-    <|> vecElim' <$ reserved "vecElim"
-
-compoundTyConP :: Parser (Term 'Inferable)
-compoundTyConP =
-  vecCon' <$ reserved "Vec"
-    <|> variantBracketed
-      ( Variant <$> fieldSeqP "tag" (try (symbol "|" <* notFollowedBy (symbol ")"))) (symbol ":")
-      )
-    <|> between (symbol "{") (symbol "}") (Record <$> fieldSeqP "field" (symbol ",") (symbol ":"))
-
-fieldSeqP ::
-  String ->
-  Parser fieldSeparator ->
-  Parser fieldAndTypeSep ->
-  Parser [(Text, Term 'Checkable)]
-fieldSeqP tokenName sep fldSep = do
-  flds <-
-    ( (,)
-        <$> (identifier <?> tokenName)
-        <* fldSep
-        <*> checkableExprP
-      )
-      `sepBy` sep
-  let dups =
-        map fst $
-          filter ((> 1) . snd) $
-            Map.toList $
-              Map.fromListWith (+) $
-                map (Bi.second $ const (1 :: Int)) flds
-  unless (null dups) $
-    fail $
-      "Following field(s) occurred more than once: "
-        <> show dups
-  pure flds
-
-variantBracketed :: Parser a -> Parser a
-variantBracketed p =
-  try (symbol "(" *> symbol "|" *> p <* (symbol "|" *> symbol ")"))
-    <|> symbol "⦇" *> p <* symbol "⦈"
-
-datConP :: Parser (Term 'Inferable)
-datConP =
-  naturalP
-    <|> LamAnn Star' (Nil (Bound' 0)) <$ reserved "nil"
-    <|> LamAnn Nat' (Succ (Bound' 0)) <$ reserved "succ"
-    <|> cons' <$ reserved "cons"
-
-naturalP :: Parser (Term 'Inferable)
-naturalP =
-  lexeme decimal <&> \n ->
-    foldr ($) Zero (replicate n (Succ . Inf))
-
-recordChkP :: Parser (Term 'Checkable)
-recordChkP =
-  reserved "record"
-    *> between
-      (symbol "{")
-      (symbol "}")
-      (MkRecord <$> fieldSeqP "field" (symbol ",") (symbol "="))
-
-unAnnLamP :: Parser (Term 'Checkable)
-unAnnLamP = label "Unannotated lambda" $ lexeme $ do
-  reserved "λ"
-  bindee <- some (identifier <?> "variable name")
-  void $ symbol "."
-  foldr
-    (\var p -> binding var $ Lam <$> p)
-    (checkableExprP <?> "lambda body")
-    bindee
+reservedOpNames :: HashSet Text
+reservedOpNames = HS.fromList ["->", "→", ":", "#"]
 
 parseOnly ::
   Parser a ->
@@ -313,4 +373,4 @@ parseNamed ::
   Parser a ->
   Text ->
   Either String a
-parseNamed name p = (errorBundlePretty +++ id) . runParser (runReaderT p mempty) name
+parseNamed name p = (errorBundlePretty +++ id) . runParser p name

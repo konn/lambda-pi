@@ -3,13 +3,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
-module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.ParserSpec where
+module Language.Lambda.Syntax.LambdaPi.ParserSpec where
 
 import Data.List (foldl1')
 import Data.Text (Text)
 import qualified Data.Text as T
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
-import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser
+import Language.Lambda.Syntax.LambdaPi
+import Language.Lambda.Syntax.LambdaPi.Parser
 import Test.Tasty
 import Test.Tasty.HUnit
 
