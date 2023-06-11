@@ -336,7 +336,7 @@ typeInfer !i ctx (App NoExtField e e') = do
       Left $
         "LHS of application must be has a function type, but got: "
           <> show (pprint e, pprint $ quote 0 ty)
-typeInfer i ctx (Lam NoExtField _ ty body) = do
+typeInfer i ctx (Lam NoExtField mv ty body) = do
   let ctx' = toEvalContext ctx
   typeCheck i ctx ty VStar
   let tyVal = eval ctx' ty
@@ -344,7 +344,7 @@ typeInfer i ctx (Lam NoExtField _ ty body) = do
     typeInfer (i + 1) (HM.insert (Local i) (Nothing, tyVal) ctx) $
       subst 0 (Var NoExtField (Local i)) body
   pure $
-    VPi Nothing tyVal $ \v ->
+    VPi mv tyVal $ \v ->
       substLocal i v bodyTy
 typeInfer i ctx (Pi NoExtField _ rho rho') = do
   typeCheck i ctx rho VStar

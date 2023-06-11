@@ -4,12 +4,10 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
@@ -796,7 +794,7 @@ instance VarLike Name where
     mtn <- preview $ #boundVars . ix i
     case mtn of
       Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
-      Nothing -> do
+      Nothing ->
         pure $
           Just $
             "<<Local: " <> T.pack (show i) <> ">>"
@@ -970,36 +968,3 @@ instance Pretty PrettyEnv (XExprTyping m) where
 
 pprint :: Pretty PrettyEnv a => a -> Doc
 pprint = execDocM (mempty @PrettyEnv) . pretty
-
-{-
-occurs :: Int -> Expr (Typing m) -> Bool
-occurs i (XExpr (Inf te')) = occurs i te'
-occurs i (Lam _ _ _ te') = occurs (i + 1) te'
-occurs i (MkRecord _ flds) = any (occurs i . snd) flds
-occurs i (Ann _ te' te2) = occurs i te' || occurs i te2
-occurs _ Star {} = False
-occurs i (Pi _ _ te' te2) =
-  occurs i te' || occurs (i + 1) te2
-occurs i (NatElim _ te' te2 te3 te4) =
-  occurs i te' || occurs i te2 || occurs i te3 || occurs i te4
-occurs i (Bound n)
-  | i == n = True
-  | otherwise = False
-occurs _ Free {} = False
-occurs i (App _ te' te2) = occurs i te' || occurs i te2
-occurs _ Nat {} = False
-occurs _ Zero {} = False
-occurs i (Succ _ te') = occurs i te'
-occurs i (Vec _ te' te2) = occurs i te' || occurs i te2
-occurs i (Nil _ te') = occurs i te'
-occurs i (Cons _ te' te2 te3 te4) = occurs i te' || occurs i te2 || occurs i te3 || occurs i te4
-occurs i (VecElim _ te' te2 te3 te4 te5 te6) =
-  occurs i te'
-    || occurs i te2
-    || occurs i te3
-    || occurs i te4
-    || occurs i te5
-    || occurs i te6
-occurs i (Record _ (RecordFieldTypes flds)) = any (occurs i . snd) flds
-occurs i (ProjField _ e _) = occurs i e
- -}
