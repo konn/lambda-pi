@@ -5,6 +5,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -54,8 +55,8 @@ toInferable = \case
   Var NoExtField v -> pure $ Var NoExtField v
   Lam NoExtField v minType body -> do
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
-  Pi NoExtField NoExtField srcTy dstTy ->
-    Pi NoExtField NoExtField <$> toCheckable srcTy <*> toCheckable dstTy
+  Pi NoExtField mv srcTy dstTy ->
+    Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
   Nat NoExtField -> pure $ Nat NoExtField
   Zero NoExtField -> pure $ Zero NoExtField
   Succ NoExtField x -> Succ NoExtField <$> toCheckable x
@@ -95,8 +96,8 @@ toCheckable = \case
       <|> Lam NoExtField mv . Just <$> toCheckable ty <*> toCheckable body
   Lam NoExtField mv Nothing body -> do
     Lam NoExtField mv Nothing <$> toCheckable body
-  Pi NoExtField NoExtField srcTy dstTy ->
-    fmap inf . Pi NoExtField NoExtField <$> toCheckable srcTy <*> toCheckable dstTy
+  Pi NoExtField mv srcTy dstTy ->
+    fmap inf . Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
   Nat NoExtField -> pure $ inf $ Nat NoExtField
   Zero NoExtField -> pure $ inf $ Zero NoExtField
   Succ NoExtField x -> inf . Succ NoExtField <$> toCheckable x
@@ -128,7 +129,7 @@ data Value
   | VNat
   | VZero
   | VSucc Value
-  | VPi Value (Value -> Value)
+  | VPi (Maybe Text) Value (Value -> Value)
   | VNeutral Neutral
   | VVec Value Value
   | --  | VVariant (HashMap Text Value)
@@ -200,7 +201,7 @@ typeCheck _ _ _mkRec@MkRecord {} _ty =
   -- FIXME: pretty print
   Left "Given records, but expected other types"
 typeCheck _ _ (ProjField c _ _) _ = noExtCon c
-typeCheck i ctx (Lam NoExtField _ _ e) (VPi ty ty') = do
+typeCheck i ctx (Lam NoExtField _ _ e) (VPi _ ty ty') = do
   typeCheck
     (i + 1)
     (HM.insert (Local i) (Nothing, ty) ctx)
@@ -240,7 +241,7 @@ typeInfer _ _ (XExpr (BVar bd)) = Left $ "Impossible: the type-checker encounter
 typeInfer !i ctx (App NoExtField e e') = do
   let ctx' = toEvalContext ctx
   typeInfer i ctx e >>= \case
-    VPi t t' -> do
+    VPi _ t t' -> do
       typeCheck i ctx e' t
       pure $ t' $ eval ctx' e'
     ty ->
@@ -255,9 +256,9 @@ typeInfer i ctx (Lam NoExtField _ ty body) = do
     typeInfer (i + 1) (HM.insert (Local i) (Nothing, tyVal) ctx) $
       subst 0 (Var NoExtField (Local i)) body
   pure $
-    VPi tyVal $ \v ->
+    VPi Nothing tyVal $ \v ->
       substLocal i v bodyTy
-typeInfer i ctx (Pi NoExtField NoExtField rho rho') = do
+typeInfer i ctx (Pi NoExtField _ rho rho') = do
   typeCheck i ctx rho VStar
   let ctx' = toEvalContext ctx
       t = eval ctx' rho
@@ -271,12 +272,12 @@ typeInfer _ _ Nat {} = pure VStar
 typeInfer _ _ Zero {} = pure VNat
 typeInfer i ctx (Succ NoExtField k) = VNat <$ typeCheck i ctx k VNat
 typeInfer i ctx (NatElim NoExtField m mz ms k) = do
-  typeCheck i ctx m $ VPi VNat $ const VStar
+  typeCheck i ctx m $ VPi (Just "k") VNat $ const VStar
   let mVal = eval (toEvalContext ctx) m
   typeCheck i ctx mz $ mVal @@ VZero
   typeCheck i ctx ms $
-    VPi VNat $ \l ->
-      VPi (mVal @@ l) $ const $ mVal @@ VSucc l
+    VPi (Just "l") VNat $ \l ->
+      VPi Nothing (mVal @@ l) $ const $ mVal @@ VSucc l
   typeCheck i ctx k VNat
   let kVal = eval (toEvalContext ctx) k
   pure $ mVal @@ kVal
@@ -298,16 +299,16 @@ typeInfer i ctx (VecElim NoExtField a m mnil mcons n vs) = do
   typeCheck i ctx a VStar
   let aVal = eval ctx' a
   typeCheck i ctx m $
-    VPi VNat $ \k ->
-      VPi (VVec aVal k) $ const VStar
+    VPi (Just "k") VNat $ \k ->
+      VPi Nothing (VVec aVal k) $ const VStar
   let mVal = eval ctx' m
   typeCheck i ctx mnil $
     vapps [mVal, VZero, VNil aVal]
   typeCheck i ctx mcons $
-    VPi VNat $ \k ->
-      VPi aVal $ \y ->
-        VPi (VVec aVal k) $ \ys ->
-          VPi (vapps [mVal, k, ys]) $
+    VPi (Just "k") VNat $ \k ->
+      VPi (Just "y") aVal $ \y ->
+        VPi (Just "ys") (VVec aVal k) $ \ys ->
+          VPi Nothing (vapps [mVal, k, ys]) $
             const $
               vapps [mVal, VSucc k, VCons aVal k y ys]
   typeCheck i ctx n VNat
@@ -346,8 +347,8 @@ subst !i r (Lam x mv ann body) =
   case typingModeVal @m of
     SCheck -> Lam x mv (subst i r <$> ann) $ subst (i + 1) r body
     SInfer -> Lam x mv (subst i r ann) $ subst (i + 1) r body
-subst !i r (Pi c NoExtField ann body) =
-  Pi c NoExtField (subst i r ann) (subst (i + 1) r body)
+subst !i r (Pi c mv ann body) =
+  Pi c mv (subst i r ann) (subst (i + 1) r body)
 subst _ _ (Nat c) = Nat c
 subst _ _ (Zero c) = Zero c
 subst i r (Succ c n) = Succ c $ subst i r n
@@ -391,8 +392,8 @@ substLocal _ _ VStar = VStar
 substLocal _ _ VNat = VNat
 substLocal _ _ VZero = VZero
 substLocal i v (VSucc va) = VSucc $ substLocal i v va
-substLocal i v (VPi va f) =
-  VPi (substLocal i v va) $ substLocal i v . f
+substLocal i v (VPi mv va f) =
+  VPi mv (substLocal i v va) $ substLocal i v . f
 substLocal i v (VNeutral neu) =
   either VNeutral id $ substLocalNeutral i v neu
 substLocal i v (VVec va va') = VVec (substLocal i v va) (substLocal i v va')
@@ -448,9 +449,9 @@ quote i (VCons a n x xs) =
       (quote i n)
       (quote i x)
       (quote i xs)
-quote i (VPi v f) =
+quote i (VPi mv v f) =
   inf $
-    Pi NoExtField NoExtField (quote i v) $
+    Pi NoExtField mv (quote i v) $
       quote (i + 1) $
         f $
           vfree $
@@ -497,8 +498,8 @@ eval ctx (Lam _ mv _ e) = VLam mv $ \x ->
   eval
     (ctx & #localBinds %~ (x <|))
     e
-eval ctx (Pi _ NoExtField t t') =
-  VPi (eval ctx t) $ \x -> eval (ctx & #localBinds %~ (x <|)) t'
+eval ctx (Pi _ mv t t') =
+  VPi mv (eval ctx t) $ \x -> eval (ctx & #localBinds %~ (x <|)) t'
 eval _ Nat {} = VNat
 eval _ Zero {} = VZero
 eval ctx (Succ _ k) = VSucc $ eval ctx k

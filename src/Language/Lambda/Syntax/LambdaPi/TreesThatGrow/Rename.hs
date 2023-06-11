@@ -49,11 +49,11 @@ renameExprM = \case
       <$> mapM renameExprM mtyp
       <*> local (#boundVars %~ HM.insert v 0 . fmap succ) (renameExprM body)
   Pi NoExtField mv typ body ->
-    Pi NoExtField NoExtField
+    Pi NoExtField (maybeName mv)
       <$> renameExprM typ
       <*> local
         ( #boundVars
-            %~ maybe id (`HM.insert` 0) mv . fmap succ
+            %~ maybe id (`HM.insert` 0) (maybeName mv) . fmap succ
         )
         (renameExprM body)
   Nat NoExtField -> pure $ Nat NoExtField

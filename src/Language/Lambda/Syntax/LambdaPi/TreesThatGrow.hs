@@ -68,6 +68,8 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
 
   -- *** Pi-types
   XPi,
+  DepName (..),
+  maybeName,
   PiVarName,
   PiVarType,
   PiRHS,
@@ -340,11 +342,20 @@ type instance XPi Checkable = NoExtCon
 
 type family PiVarName p
 
-type instance PiVarName Parse = Maybe Text
+maybeName :: DepName -> Maybe Text
+maybeName = \case
+  Indep -> Nothing
+  DepAnon -> Nothing
+  DepNamed t -> Just t
 
-type instance PiVarName Rename = NoExtField
+data DepName = Indep | DepAnon | DepNamed Text
+  deriving (Show, Eq, Ord, Generic)
 
-type instance PiVarName (Typing _) = NoExtField
+type instance PiVarName Parse = DepName
+
+type instance PiVarName Rename = Maybe Text
+
+type instance PiVarName (Typing _) = Maybe Text
 
 type family PiVarType p
 

@@ -46,7 +46,7 @@ exprP =
     [ [InfixR $ Ann NoExtField <$ reservedOp ":"]
     ,
       [ InfixR $
-          Pi NoExtField Nothing
+          Pi NoExtField Indep
             <$ (reservedOp "->" <|> reservedOp "→")
       ]
     , [InfixL $ App NoExtField <$ appSpaceP]
@@ -100,7 +100,7 @@ eliminatorsP =
 
 natElim' :: ParsedExpr
 natElim' =
-  Lam NoExtField "t" (Just (Pi NoExtField Nothing nat star))
+  Lam NoExtField "t" (Just (Pi NoExtField Indep nat star))
     $ Lam NoExtField "base" (Just (App NoExtField (var "t") zero))
     $ Lam
       NoExtField
@@ -108,11 +108,11 @@ natElim' =
       ( Just
           ( Pi
               NoExtField
-              (Just "k")
+              (DepNamed "k")
               nat
               ( Pi
                   NoExtField
-                  Nothing
+                  Indep
                   (App NoExtField (var "t") (var "k"))
                   $ App NoExtField (var "t")
                   $ succ' (var "k")
@@ -129,10 +129,10 @@ vecElim' =
       NoExtField
       "t"
       ( Just $
-          Pi NoExtField (Just "n") nat $
+          Pi NoExtField (DepNamed "n") nat $
             Pi
               NoExtField
-              Nothing
+              Indep
               (Vec NoExtField (var "a") (var "n"))
               star
       )
@@ -145,10 +145,10 @@ vecElim' =
       NoExtField
       "ind"
       ( Just $
-          Pi NoExtField (Just "n") nat $
-            Pi NoExtField (Just "x") (var "a") $
-              Pi NoExtField (Just "xs") (Vec NoExtField (var "a") (var "n")) $
-                Pi NoExtField Nothing (apps [var "t", var "n", var "xs"]) $
+          Pi NoExtField (DepNamed "n") nat $
+            Pi NoExtField (DepNamed "x") (var "a") $
+              Pi NoExtField (DepNamed "xs") (Vec NoExtField (var "a") (var "n")) $
+                Pi NoExtField Indep (apps [var "t", var "n", var "xs"]) $
                   apps [var "t", Succ NoExtField (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
       )
     $ Lam NoExtField "n" (Just nat)
