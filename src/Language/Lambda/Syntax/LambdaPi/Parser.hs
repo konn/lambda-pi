@@ -4,6 +4,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TupleSections #-}
 
+-- FIXME: let-and-app test case suffers
 module Language.Lambda.Syntax.LambdaPi.Parser (
   exprP,
   Parser,
