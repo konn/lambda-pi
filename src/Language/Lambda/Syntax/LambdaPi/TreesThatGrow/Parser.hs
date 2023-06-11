@@ -76,7 +76,7 @@ lamP = do
   reserved "λ"
   bndrs <- binders <* symbol "."
   foldr
-    (\(v, mty) p -> Lam v mty <$> p)
+    (\(v, mty) p -> Lam NoExtField v mty <$> p)
     exprP
     bndrs
 
@@ -100,9 +100,10 @@ eliminatorsP =
 
 natElim' :: ParsedExpr
 natElim' =
-  Lam "t" (Just (Pi NoExtField Nothing nat star))
-    $ Lam "base" (Just (App NoExtField (var "t") zero))
+  Lam NoExtField "t" (Just (Pi NoExtField Nothing nat star))
+    $ Lam NoExtField "base" (Just (App NoExtField (var "t") zero))
     $ Lam
+      NoExtField
       "ind"
       ( Just
           ( Pi
@@ -118,13 +119,14 @@ natElim' =
               )
           )
       )
-    $ Lam "n" (Just nat)
+    $ Lam NoExtField "n" (Just nat)
     $ NatElim NoExtField (var "t") (var "base") (var "ind") (var "n")
 
 vecElim' :: ParsedExpr
 vecElim' =
-  Lam "a" (Just star)
+  Lam NoExtField "a" (Just star)
     $ Lam
+      NoExtField
       "t"
       ( Just $
           Pi NoExtField (Just "n") nat $
@@ -135,10 +137,12 @@ vecElim' =
               star
       )
     $ Lam
+      NoExtField
       "base"
       ( Just $ apps [var "t", zero, Nil NoExtField (var "a")]
       )
     $ Lam
+      NoExtField
       "ind"
       ( Just $
           Pi NoExtField (Just "n") nat $
@@ -147,8 +151,8 @@ vecElim' =
                 Pi NoExtField Nothing (apps [var "t", var "n", var "xs"]) $
                   apps [var "t", Succ NoExtField (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
       )
-    $ Lam "n" (Just nat)
-    $ Lam "xs" (Just $ Vec NoExtField (var "a") (var "n"))
+    $ Lam NoExtField "n" (Just nat)
+    $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
     $ apps [var "t", var "n", var "xs"]
 
 apps :: [ParsedExpr] -> Expr Parse
@@ -157,9 +161,9 @@ apps = foldl1' (App NoExtField)
 dataConP :: Parser ParsedExpr
 dataConP =
   naturalP
-    <|> Lam "t" (Just star) (Nil NoExtField (var "t")) <$ reserved "nil"
+    <|> Lam NoExtField "t" (Just star) (Nil NoExtField (var "t")) <$ reserved "nil"
     <|> Zero NoExtField <$ reserved "zero"
-    <|> Lam "n" (Just nat) (succ' $ var "n") <$ reserved "succ"
+    <|> Lam NoExtField "n" (Just nat) (succ' $ var "n") <$ reserved "succ"
     <|> cons' <$ reserved "cons"
     <|> recordP
 
@@ -175,11 +179,12 @@ recordP =
 cons' :: ParsedExpr
 cons' =
   Lam
+    NoExtField
     "t"
     (Just star)
-    $ Lam "n" (Just nat)
-    $ Lam "x" (Just (var "t"))
-    $ Lam "xs" (Just (Vec NoExtField (var "t") (var "n")))
+    $ Lam NoExtField "n" (Just nat)
+    $ Lam NoExtField "x" (Just (var "t"))
+    $ Lam NoExtField "xs" (Just (Vec NoExtField (var "t") (var "n")))
     $ Cons NoExtField (var "t") (var "n") (var "x") (var "xs")
 
 var :: Text -> ParsedExpr
@@ -233,7 +238,7 @@ fieldSeqP tokenName sep fldSep = do
   pure flds
 
 vecCon' :: ParsedExpr
-vecCon' = Lam "t" (Just (Star NoExtField)) $ Lam "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
+vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
 
 varP :: Parser ParsedExpr
 varP = Var NoExtField <$> identifier

@@ -46,6 +46,7 @@ dependencies:
 - mtl
 - parser-combinators
 - parsers
+- pretty
 - rio
 - rio-orphans
 - semialign

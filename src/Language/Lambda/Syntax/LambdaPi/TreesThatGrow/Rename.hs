@@ -44,8 +44,8 @@ renameExprM = \case
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r ->
     App NoExtField <$> renameExprM l <*> renameExprM r
-  Lam v mtyp body ->
-    Lam NoExtField
+  Lam NoExtField v mtyp body ->
+    Lam NoExtField (Just v)
       <$> mapM renameExprM mtyp
       <*> local (#boundVars %~ HM.insert v 0 . fmap succ) (renameExprM body)
   Pi NoExtField mv typ body ->

@@ -52,8 +52,8 @@ toInferable = \case
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r -> App NoExtField <$> toInferable l <*> toCheckable r
   Var NoExtField v -> pure $ Var NoExtField v
-  Lam NoExtField minType body -> do
-    Lam NoExtField <$> (toCheckable =<< minType) <*> toInferable body
+  Lam NoExtField v minType body -> do
+    Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
   Pi NoExtField NoExtField srcTy dstTy ->
     Pi NoExtField NoExtField <$> toCheckable srcTy <*> toCheckable dstTy
   Nat NoExtField -> pure $ Nat NoExtField
@@ -89,12 +89,12 @@ toCheckable = \case
   Star NoExtField -> pure $ inf $ Star NoExtField
   App NoExtField l r -> fmap inf . App NoExtField <$> toInferable l <*> toCheckable r
   Var NoExtField v -> pure $ inf $ Var NoExtField v
-  Lam NoExtField (Just ty) body ->
+  Lam NoExtField mv (Just ty) body ->
     do
-      fmap inf . Lam NoExtField <$> toCheckable ty <*> toInferable body
-      <|> Lam NoExtField . Just <$> toCheckable ty <*> toCheckable body
-  Lam NoExtField Nothing body -> do
-    Lam NoExtField Nothing <$> toCheckable body
+      fmap inf . Lam NoExtField mv <$> toCheckable ty <*> toInferable body
+      <|> Lam NoExtField mv . Just <$> toCheckable ty <*> toCheckable body
+  Lam NoExtField mv Nothing body -> do
+    Lam NoExtField mv Nothing <$> toCheckable body
   Pi NoExtField NoExtField srcTy dstTy ->
     fmap inf . Pi NoExtField NoExtField <$> toCheckable srcTy <*> toCheckable dstTy
   Nat NoExtField -> pure $ inf $ Nat NoExtField
@@ -123,7 +123,7 @@ toCheckable = \case
   XExpr x -> noExtCon x
 
 data Value
-  = VLam (Value -> Value)
+  = VLam (Maybe Text) (Value -> Value)
   | VStar
   | VNat
   | VZero
@@ -200,7 +200,7 @@ typeCheck _ _ _mkRec@MkRecord {} _ty =
   -- FIXME: pretty print
   Left "Given records, but expected other types"
 typeCheck _ _ (ProjField c _ _) _ = noExtCon c
-typeCheck i ctx (Lam NoExtField _ e) (VPi ty ty') = do
+typeCheck i ctx (Lam NoExtField _ _ e) (VPi ty ty') = do
   typeCheck
     (i + 1)
     (HM.insert (Local i) (Nothing, ty) ctx)
@@ -208,7 +208,7 @@ typeCheck i ctx (Lam NoExtField _ e) (VPi ty ty') = do
     $ ty'
     $ vfree
     $ Local i
-typeCheck _ _ (Lam NoExtField _ _e) _ty =
+typeCheck _ _ (Lam NoExtField _ _ _e) _ty =
   -- FIXME: pretty print
   Left "Expected other type, but got lambda"
 typeCheck _ _ (Ann c _ _) _ = noExtCon c
@@ -247,7 +247,7 @@ typeInfer !i ctx (App NoExtField e e') = do
       Left $
         "LHS of application must be has a function type, but got: "
           <> show (e, quote 0 ty)
-typeInfer i ctx (Lam NoExtField ty body) = do
+typeInfer i ctx (Lam NoExtField _ ty body) = do
   let ctx' = toEvalContext ctx
   typeCheck i ctx ty VStar
   let tyVal = eval ctx' ty
@@ -342,10 +342,10 @@ subst !i r (Ann c e ty) = Ann c (subst i r e) (subst i r ty)
 subst !_ _ (Star c) = Star c
 subst !_ _ f@Var {} = f
 subst !i r (App e f g) = App e (subst i r f) (subst i r g)
-subst !i r (Lam x ann body) =
+subst !i r (Lam x mv ann body) =
   case typingModeVal @m of
-    SCheck -> Lam x (subst i r <$> ann) $ subst (i + 1) r body
-    SInfer -> Lam x (subst i r ann) $ subst (i + 1) r body
+    SCheck -> Lam x mv (subst i r <$> ann) $ subst (i + 1) r body
+    SInfer -> Lam x mv (subst i r ann) $ subst (i + 1) r body
 subst !i r (Pi c NoExtField ann body) =
   Pi c NoExtField (subst i r ann) (subst (i + 1) r body)
 subst _ _ (Nat c) = Nat c
@@ -386,7 +386,7 @@ subst i r (Lam NoExtField t e) =
  -}
 
 substLocal :: Int -> Value -> Type -> Value
-substLocal i v (VLam f) = VLam $ substLocal i v . f
+substLocal i v (VLam mv f) = VLam mv $ substLocal i v . f
 substLocal _ _ VStar = VStar
 substLocal _ _ VNat = VNat
 substLocal _ _ VZero = VZero
@@ -433,7 +433,7 @@ substLocalNeutral i v (NProjField r f) =
     Left n -> Left $ NProjField n f
 
 quote :: Int -> Value -> Expr Checkable
-quote i (VLam f) = Lam NoExtField Nothing $ quote (i + 1) $ f $ vfree $ Quote i
+quote i (VLam mv f) = Lam NoExtField mv Nothing $ quote (i + 1) $ f $ vfree $ Quote i
 quote _ VStar = inf $ Star NoExtField
 quote _ VNat = inf $ Nat NoExtField
 quote _ VZero = inf $ Zero NoExtField
@@ -493,7 +493,7 @@ eval ctx (Var _ fv) =
     _ -> vfree fv
 eval ctx (XExpr (BVar n)) = ctx ^?! #localBinds . ix n
 eval ctx (App _ f x) = eval ctx f @@ eval ctx x
-eval ctx (Lam _ _ e) = VLam $ \x ->
+eval ctx (Lam _ mv _ e) = VLam mv $ \x ->
   eval
     (ctx & #localBinds %~ (x <|))
     e
@@ -557,7 +557,7 @@ evalProjField f =
 infixl 9 @@
 
 (@@) :: Value -> Value -> Value
-VLam f @@ r = f r
+VLam _ f @@ r = f r
 VNeutral neu @@ r = VNeutral (NApp neu r)
 l @@ r = error $ "Could not apply: " <> show (quote 0 l, quote 0 r)
 

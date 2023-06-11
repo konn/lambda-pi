@@ -62,6 +62,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
 
   -- *** Lambda abstraction
   XLam,
+  LamBindName,
   LamBindType,
   LamBody,
 
@@ -295,11 +296,19 @@ type instance AppRHS (Typing _) = Expr Checkable
 
 type family XLam p
 
-type instance XLam Parse = Text
+type instance XLam Parse = NoExtField
 
 type instance XLam Rename = NoExtField
 
 type instance XLam (Typing _) = NoExtField
+
+type family LamBindName p
+
+type instance LamBindName Parse = Text
+
+type instance LamBindName Rename = Maybe Text
+
+type instance LamBindName (Typing m) = Maybe Text
 
 type family LamBindType p
 
@@ -686,7 +695,7 @@ data Expr phase
   | Star (XStar phase)
   | Var (XVar phase) (Id phase)
   | App (XApp phase) (AppLHS phase) (AppRHS phase)
-  | Lam (XLam phase) (LamBindType phase) (LamBody phase)
+  | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
   | Nat (XNat phase)
   | Zero (XZero phase)

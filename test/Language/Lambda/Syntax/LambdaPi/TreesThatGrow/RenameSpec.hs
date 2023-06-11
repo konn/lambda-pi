@@ -14,11 +14,11 @@ type ParsedExpr = Expr Parse
 inputCases :: [(Expr Parse, Expr Rename)]
 inputCases =
   [
-    ( Lam "f" Nothing $
-        Lam "x" Nothing $
+    ( Lam NoExtField "f" Nothing $
+        Lam NoExtField "x" Nothing $
           App NoExtField (var "f") (var "x")
-    , Lam NoExtField Nothing $
-        Lam NoExtField Nothing $
+    , Lam NoExtField (Just "f") Nothing $
+        Lam NoExtField (Just "x") Nothing $
           App NoExtField (var $ Local 1) (var $ Local 0)
     )
   ]

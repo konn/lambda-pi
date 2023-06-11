@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
@@ -40,15 +41,15 @@ inputCases =
   , ("(Vec Nat 5)", vecNat5)
   , ("x", var "x")
   , ("(x)", var "x")
-  , ("λ x. x", Lam "x" Nothing (var "x"))
-  , ("(λ x. x)", Lam "x" Nothing (var "x"))
+  , ("λ x. x", Lam NoExtField "x" Nothing (var "x"))
+  , ("(λ x. x)", Lam NoExtField "x" Nothing (var "x"))
   ,
     ( "{a: Nat, b: Nat -> Nat}"
     , Record NoExtField $ RecordFieldTypes [("a", nat), ("b", nat :~> nat)]
     )
   ,
     ( "record {a = Nat, b = succ}"
-    , MkRecord NoExtField $ MkRecordFields [("a", nat), ("b", Lam "n" (Just nat) (succ' $ var "n"))]
+    , MkRecord NoExtField $ MkRecordFields [("a", nat), ("b", Lam NoExtField "n" (Just nat) (succ' $ var "n"))]
     )
   , ("rec.foo", ProjField NoExtField (var "rec") "foo")
   ,
@@ -73,7 +74,7 @@ inputCases =
     )
   ,
     ( "λ (x : rec.foo). x"
-    , Lam "x" (Just $ ProjField NoExtField (var "rec") "foo") (var "x")
+    , Lam NoExtField "x" (Just $ ProjField NoExtField (var "rec") "foo") (var "x")
     )
   ]
 
@@ -91,9 +92,10 @@ test_exprP =
 
 natElim' :: ParsedExpr
 natElim' =
-  Lam "t" (Just (Pi NoExtField Nothing nat star))
-    $ Lam "base" (Just (App NoExtField (var "t") zero))
+  Lam NoExtField "t" (Just (Pi NoExtField Nothing nat star))
+    $ Lam NoExtField "base" (Just (App NoExtField (var "t") zero))
     $ Lam
+      NoExtField
       "ind"
       ( Just
           ( Pi
@@ -109,13 +111,14 @@ natElim' =
               )
           )
       )
-    $ Lam "n" (Just nat)
+    $ Lam NoExtField "n" (Just nat)
     $ NatElim NoExtField (var "t") (var "base") (var "ind") (var "n")
 
 vecElim' :: ParsedExpr
 vecElim' =
-  Lam "a" (Just star)
+  Lam NoExtField "a" (Just star)
     $ Lam
+      NoExtField
       "t"
       ( Just $
           Pi NoExtField (Just "n") nat $
@@ -126,10 +129,12 @@ vecElim' =
               star
       )
     $ Lam
+      NoExtField
       "base"
       ( Just $ apps [var "t", zero, Nil NoExtField (var "a")]
       )
     $ Lam
+      NoExtField
       "ind"
       ( Just $
           Pi NoExtField (Just "n") nat $
@@ -138,8 +143,8 @@ vecElim' =
                 Pi NoExtField Nothing (apps [var "t", var "n", var "xs"]) $
                   apps [var "t", Succ NoExtField (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
       )
-    $ Lam "n" (Just nat)
-    $ Lam "xs" (Just $ Vec NoExtField (var "a") (var "n"))
+    $ Lam NoExtField "n" (Just nat)
+    $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
     $ apps [var "t", var "n", var "xs"]
 
 apps :: [ParsedExpr] -> Expr Parse
@@ -158,10 +163,18 @@ star :: Expr Parse
 star = Star NoExtField
 
 vecCon' :: ParsedExpr
-vecCon' = Lam "t" (Just (Star NoExtField)) $ Lam "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
+vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
 
 pattern (:~>) :: ParsedExpr -> ParsedExpr -> ParsedExpr
 pattern (:~>) l r = Pi NoExtField Nothing l r
+
+pattern Lam' ::
+  (XLam phase ~ NoExtField) =>
+  LamBindName phase ->
+  LamBindType phase ->
+  LamBody phase ->
+  Expr phase
+pattern Lam' t u v = Lam NoExtField t u v
 
 infixr 0 :~>
 
