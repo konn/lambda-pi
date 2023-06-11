@@ -130,6 +130,7 @@ test-suite lambda-pi-test
   main-is: Spec.hs
   other-modules:
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow.ParserSpec
+      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.RenameSpec
       Paths_lambda_pi
   hs-source-dirs:
       test
