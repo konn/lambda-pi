@@ -16,6 +16,7 @@ module Text.PrettyPrint.Monadic (
   render,
   renderStyle,
   DocM (..),
+  Doc,
   Style (..),
   execDocM,
 
@@ -96,8 +97,8 @@ import GHC.Generics
 import Text.PrettyPrint (Doc, Style)
 import Text.PrettyPrint qualified as PP
 
-execDocM :: PrettyEnv e -> DocM e () -> Doc
-execDocM pe (DocM act) = execWriter $ runReaderT act pe
+execDocM :: e -> DocM e () -> Doc
+execDocM pe (DocM act) = execWriter $ runReaderT act (PrettyEnv 0 pe)
 
 newtype DocM e a = DocM {runDocM :: ReaderT (PrettyEnv e) (Writer Doc) a}
   deriving (Semigroup, Monoid) via Ap (ReaderT (PrettyEnv e) (Writer Doc)) a
@@ -328,7 +329,7 @@ instance Pretty e String where
   pretty = fromString
 
 renderStyle :: Style -> e -> DocM e () -> String
-renderStyle sty e = PP.renderStyle sty . execDocM (PrettyEnv 0 e)
+renderStyle sty e = PP.renderStyle sty . execDocM e
 
 render :: e -> DocM e () -> String
 render = renderStyle PP.style

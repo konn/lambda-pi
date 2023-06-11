@@ -19,22 +19,25 @@ import Data.Functor ((<&>))
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
-import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Parser
+import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
+import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser
+import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename
+import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Typing
 import RIO (Display (display), HasLogFunc, IsString (fromString), MonadIO, MonadReader, MonadThrow (throwM), MonadUnliftIO, NonEmpty, catch, displayShow, logError, logInfo, logWarn)
 import RIO.State (MonadState)
 import Text.Megaparsec (eof, optional, (<|>))
 
 data Stmt
-  = Eval (Term 'Checkable)
-  | Let Text (Term 'Inferable)
+  = Eval (Expr Parse)
+  | Let Text (Expr Parse)
   | Clear (Maybe Text)
-  | Assume (NonEmpty (Text, Term 'Checkable))
+  | Assume (NonEmpty (Text, Expr Parse))
   deriving (Show)
 
 newtype REPLContext = REPLCtx {bindings :: HashMap Text (Maybe Value, Type)}
@@ -65,7 +68,7 @@ letM ::
   , MonadIO m
   ) =>
   Text ->
-  Term 'Inferable ->
+  Expr Inferable ->
   m ()
 letM var inf = do
   (val, ty) <- inferEvalM inf
@@ -82,14 +85,15 @@ evalM ::
   , MonadIO m
   ) =>
   Text ->
-  Term 'Checkable ->
+  Expr Inferable ->
   m ()
-evalM src (Inf trm) = do
+evalM src trm = do
   (val, typ) <- inferEvalM trm
   logInfo $ display src
   logInfo $ "  = " <> displayShow val
   logInfo $ "  : " <> displayShow typ
-evalM src recd@MkRecord {} = do
+
+{- evalM src recd@MkRecord {} = do
   ctx <- evalContextM
   _Γ <- typingContextM
   case tryEvalWith _Γ ctx recd of
@@ -100,6 +104,7 @@ evalM src recd@MkRecord {} = do
       logInfo $ "  : " <> displayShow typ
 evalM src Lam {} = do
   throwM $ CouldNotInfer src
+ -}
 
 assumeM ::
   ( MonadThrow m
@@ -109,15 +114,17 @@ assumeM ::
   , MonadIO m
   ) =>
   Text ->
-  Term 'Checkable ->
+  Expr Parse ->
   m ()
-assumeM var ty = do
-  tyVal <- checkTypeM ty VStar
-  m <- #bindings . at var <<?= (Nothing, tyVal)
-  when (isJust m) $
-    logWarn $
-      "Overriding existing binding for `" <> display var <> "'"
-  pure undefined
+assumeM var e = do
+  case toCheckable $ renameExpr e of
+    Just ty -> do
+      tyVal <- checkTypeM ty VStar
+      m <- #bindings . at var <<?= (Nothing, tyVal)
+      when (isJust m) $
+        logWarn $
+          "Overriding existing binding for `" <> display var <> "'"
+    Nothing -> throwM $ TypeError $ "Could not check: " <> show (pprint e)
 
 checkTypeM ::
   ( MonadThrow m
@@ -126,7 +133,7 @@ checkTypeM ::
   , HasLogFunc env
   , MonadIO m
   ) =>
-  Term 'Checkable ->
+  Expr Checkable ->
   Value ->
   m Type
 checkTypeM trm ty = do
@@ -134,12 +141,12 @@ checkTypeM trm ty = do
   either (throwM . TypeError) pure $
     typeCheck 0 gamma trm ty
   evalCtx <- evalContextM
-  pure $ evalChk evalCtx trm
+  pure $ eval evalCtx trm
 
 data REPLException
   = ParseError String
   | TypeError String
-  | CouldNotInfer Text
+  | CouldNotInfer (NonEmpty (Expr Parse))
   deriving (Show, Generic)
   deriving anyclass (Exception)
 
@@ -150,14 +157,14 @@ inferEvalM ::
   , HasLogFunc env
   , MonadIO m
   ) =>
-  Term 'Inferable ->
+  Expr Inferable ->
   m (Value, Type)
 inferEvalM trm = do
   ctx <- typingContextM
   typ <-
     either (throwM . TypeError) pure $ typeInfer 0 ctx trm
   evalCtx <- evalContextM
-  let !val = evalInf evalCtx trm
+  let !val = eval evalCtx trm
   pure (val, typ)
 
 typingContextM ::
@@ -171,7 +178,7 @@ evalContextM =
     mempty & #namedBinds .~ HM.mapMaybe fst dic
 
 stmtP :: Parser Stmt
-stmtP = clearP <|> letP <|> assumeP <|> Eval <$> checkableExprP
+stmtP = clearP <|> letP <|> assumeP <|> Eval <$> exprP
 
 clearP :: Parser Stmt
 clearP =
@@ -183,11 +190,11 @@ assumeP :: Parser Stmt
 assumeP =
   Assume
     <$ reserved "assume"
-    <*> binders
+    <*> (mapM (mapM (maybe (fail "No annotation") pure)) =<< binders)
 
 letP :: Parser Stmt
 letP =
-  Let <$ reserved "let" <*> identifier <* symbol "=" <*> inferableExprP
+  Let <$ reserved "let" <*> identifier <* symbol "=" <*> exprP
 
 readEvalPrintM ::
   ( MonadThrow m
@@ -207,7 +214,8 @@ readEvalPrintM inp = do
         TypeError str -> logError $ "Type error: " <> fromString str
         CouldNotInfer e ->
           logError $
-            "Could not infer the type if input: " <> display e
+            "Could not infer the type if input: "
+              <> displayShow (NE.toList $ fmap pprint e)
 
 runCommand ::
   ( MonadThrow m
@@ -219,7 +227,13 @@ runCommand ::
   Text ->
   Stmt ->
   m ()
-runCommand inp (Eval te) = evalM inp te
-runCommand _ (Let var te) = letM var te
+runCommand inp (Eval te) =
+  case toInferable $ renameExpr te of
+    Just e -> evalM inp e
+    Nothing -> throwM $ CouldNotInfer $ NE.singleton te
+runCommand _ (Let var te) =
+  case toInferable $ renameExpr te of
+    Just e -> letM var e
+    Nothing -> throwM $ CouldNotInfer $ NE.singleton te
 runCommand _ (Clear mvar) = clearM mvar
 runCommand _ (Assume ass) = mapM_ (uncurry assumeM) ass

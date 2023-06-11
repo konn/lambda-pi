@@ -1,6 +1,7 @@
 {-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
@@ -25,7 +27,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   Parse,
   Rename,
   Typing,
-  TypingExpr (..),
+  XExprTyping (..),
   TypingMode (..),
   STypingMode (..),
   KnownTypingMode (..),
@@ -132,6 +134,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   ProjFieldRecord,
 
   -- * Pretty-printing
+  pprint,
   VarLike (..),
   DocM (..),
   HasBindeeType (..),
@@ -146,9 +149,11 @@ import Data.HashMap.Strict (HashMap)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
 import Data.Maybe
+import Data.Semigroup.Generic
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
+import Data.Text qualified as T
 import GHC.Generics (Generic, Rep)
 import GHC.Generics.Constraint
 import RIO (NFData)
@@ -701,18 +706,18 @@ type instance XExpr Parse = NoExtCon
 
 type instance XExpr Rename = NoExtCon
 
-type instance XExpr (Typing m) = TypingExpr m
+type instance XExpr (Typing m) = XExprTyping m
 
-type TypingExpr :: TypingMode -> Type
-data TypingExpr m where
-  BVar :: Int -> TypingExpr 'Infer
-  Inf :: Expr Inferable -> TypingExpr 'Check
+type XExprTyping :: TypingMode -> Type
+data XExprTyping m where
+  BVar :: Int -> XExprTyping 'Infer
+  Inf :: Expr Inferable -> XExprTyping 'Check
 
-deriving instance Show (TypingExpr m)
+deriving instance Show (XExprTyping m)
 
-deriving instance Eq (TypingExpr m)
+deriving instance Eq (XExprTyping m)
 
-deriving instance Ord (TypingExpr m)
+deriving instance Ord (XExprTyping m)
 
 data Expr phase
   = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
@@ -761,15 +766,46 @@ deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
 
 data PrettyEnv = PrettyEnv
   { levels :: !(HashMap Text Int)
-  , boundVars :: !(Seq Text)
+  , boundVars :: !(Seq (Text, Int))
   }
   deriving (Show, Eq, Ord, Generic)
+  deriving (Semigroup, Monoid) via GenericSemigroupMonoid PrettyEnv
 
 class VarLike v where
   varName :: MonadReader PrettyEnv m => v -> m (Maybe Text)
 
-class HasBindeeType p v where
-  bindeeType :: v -> Maybe (Expr p)
+instance VarLike DepName where
+  varName Indep = pure Nothing
+  varName DepAnon = pure Nothing
+  varName (DepNamed n) = pure $ Just n
+
+instance VarLike Text where
+  varName = pure . Just
+
+instance VarLike (Maybe Text) where
+  varName = pure
+
+instance VarLike Name where
+  varName (Local i) = do
+    mtn <- preview $ #boundVars . ix i
+    case mtn of
+      Just (t, n) -> pure $ Just $ t <> T.pack (show n)
+      Nothing -> error $ "Out of bound Local var: " <> show i
+  varName (Global t) = pure $ Just t
+  varName q@Quote {} = error $ "Could not occur: " <> show q
+
+class HasBindeeType v where
+  type BindeeType v
+  type BindeeType v = v
+  bindeeType :: v -> Maybe (BindeeType v)
+  default bindeeType :: BindeeType v ~ v => v -> Maybe (BindeeType v)
+  bindeeType = Just
+
+instance HasBindeeType (Expr m)
+
+instance HasBindeeType e => HasBindeeType (Maybe e) where
+  type BindeeType (Maybe e) = BindeeType e
+  bindeeType = (bindeeType =<<)
 
 instance
   ( Pretty PrettyEnv (AnnLHS phase)
@@ -777,11 +813,13 @@ instance
   , VarLike (Id phase)
   , Pretty PrettyEnv (AppLHS phase)
   , Pretty PrettyEnv (AppRHS phase)
-  , HasBindeeType phase (LamBindType phase)
+  , HasBindeeType (LamBindType phase)
   , VarLike (LamBindName phase)
   , Pretty PrettyEnv (LamBody phase)
-  , HasBindeeType phase (PiVarType phase)
+  , Pretty PrettyEnv (BindeeType (LamBindType phase))
   , VarLike (PiVarName phase)
+  , HasBindeeType (PiVarType phase)
+  , Pretty PrettyEnv (BindeeType (PiVarType phase))
   , Pretty PrettyEnv (PiRHS phase)
   , Pretty PrettyEnv (SuccBody phase)
   , Pretty PrettyEnv (NatElimRetFamily phase)
@@ -817,8 +855,9 @@ instance
     withPrecParens 11 $
       pretty l <+> withPrecedence 12 (pretty r)
   pretty (Lam _ mv mp body) = withPrecParens 4 $ do
-    let mArgTy = bindeeType @phase mp
+    let mArgTy = bindeeType mp
     var <- fromMaybe "x" <$> varName mv
+    lvl <- views (#levels . at var) (fromMaybe 0)
     hang
       ( char 'λ'
           <+> appWhen
@@ -831,15 +870,16 @@ instance
       )
       2
       $ local
-        ( #levels . at var %~ Just . maybe 1 (+ 1)
-            >>> #boundVars %~ (Seq.<|) var
+        ( #levels . at var ?~ (lvl + 1)
+            >>> #boundVars %~ (Seq.<|) (var, lvl)
         )
         (pretty body)
   pretty (Pi _ mv mp body) = withPrecParens 4 $ do
     -- TODO: check occurrence of mv in body and
     -- use arrows if absent!
-    let mArgTy = bindeeType @phase mp
+    let mArgTy = bindeeType mp
     var <- fromMaybe "x" <$> varName mv
+    lvl <- views (#levels . at var) (fromMaybe 0)
     hang
       ( char 'Π'
           <+> appWhen
@@ -852,8 +892,8 @@ instance
       )
       2
       $ local
-        ( #levels . at var %~ Just . maybe 1 (+ 1)
-            >>> #boundVars %~ (Seq.<|) var
+        ( #levels . at var ?~ lvl + 1
+            >>> #boundVars %~ (Seq.<|) (var, lvl)
         )
         (pretty body)
   pretty Nat {} = text "ℕ"
@@ -897,6 +937,17 @@ instance
   pretty (ProjField _ e fld) =
     withPrecParens 12 (pretty e <> "#" <> text fld)
   pretty (XExpr e) = pretty e
+
+instance Pretty PrettyEnv (XExprTyping m) where
+  pretty (BVar i) = do
+    mtn <- preview $ #boundVars . ix i
+    case mtn of
+      Just (t, n) -> text t <> char '_' <> int n
+      Nothing -> error $ "Out of bound Local var: " <> show i
+  pretty (Inf e) = pretty e
+
+pprint :: Pretty PrettyEnv a => a -> Doc
+pprint = execDocM (mempty @PrettyEnv) . pretty
 
 {-
 occurs :: Int -> Expr (Typing m) -> Bool

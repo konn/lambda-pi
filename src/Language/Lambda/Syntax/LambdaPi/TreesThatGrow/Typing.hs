@@ -19,6 +19,8 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Typing (
   -- * Type checking and inference
   Context,
   Env (..),
+  Value (..),
+  Type,
   typeCheck,
   typeInfer,
   eval,
@@ -139,6 +141,9 @@ data Value
   | VCons Value Value Value Value
   deriving (Generic)
 
+instance Show Value where
+  show = show . pprint . quote 0
+
 data Neutral
   = NFree Name
   | NApp Neutral Value
@@ -172,8 +177,12 @@ toEvalContext ctx =
 typeCheck :: Int -> Context -> Expr Checkable -> Type -> Result ()
 typeCheck i ctx (XExpr (Inf e)) v = do
   v' <- typeInfer i ctx e
-  unless (quote 0 v == quote 0 v') $
-    Left "Type mismatch (inf)" -- FIXME: Pretty print
+  let expect = quote 0 v
+      actual = quote 0 v'
+  unless (expect == actual) $
+    Left $
+      "Type mismatch: (expected, actual) = "
+        <> show (pprint expect, pprint actual)
 typeCheck i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord flds') =
   -- TODO: Consider structural subtyping
   Bi.first (("Checking record expression failed: " <>) . unlines . DLNE.toList) $
@@ -197,9 +206,12 @@ typeCheck i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord flds') =
           )
           (HM.fromList flds)
           flds'
-typeCheck _ _ _mkRec@MkRecord {} _ty =
-  -- FIXME: pretty print
-  Left "Given records, but expected other types"
+typeCheck _ _ mkRec@MkRecord {} ty =
+  Left $
+    "Expected a term of type `"
+      <> show (pprint (quote 0 ty))
+      <> "', but got a record: "
+      <> show (pprint mkRec)
 typeCheck _ _ (ProjField c _ _) _ = noExtCon c
 typeCheck i ctx (Lam NoExtField _ _ e) (VPi _ ty ty') = do
   typeCheck
@@ -209,9 +221,12 @@ typeCheck i ctx (Lam NoExtField _ _ e) (VPi _ ty ty') = do
     $ ty'
     $ vfree
     $ Local i
-typeCheck _ _ (Lam NoExtField _ _ _e) _ty =
-  -- FIXME: pretty print
-  Left "Expected other type, but got lambda"
+typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
+  Left $
+    "Expected a tem of type `'"
+      <> show (quote 0 ty)
+      <> "', but got a lambda: "
+      <> show (pprint lam)
 typeCheck _ _ (Ann c _ _) _ = noExtCon c
 typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c

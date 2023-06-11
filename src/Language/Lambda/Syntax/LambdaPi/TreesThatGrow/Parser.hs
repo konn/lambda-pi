@@ -6,8 +6,20 @@
 
 module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser (
   exprP,
+  Parser,
   parseOnly,
   parseNamed,
+
+  -- * Misc
+  space,
+  symbol,
+  operator,
+  identifier,
+  binders,
+  reservedOp,
+  reserved,
+  keywords,
+  reservedOpNames,
 ) where
 
 import Control.Applicative (Alternative (..))
