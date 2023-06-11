@@ -126,10 +126,10 @@ vecNat5 = apps [vecCon', nat, SuccI (SuccI (SuccI (SuccI (SuccI zero))))]
 pattern SuccI :: ParsedExpr -> ParsedExpr
 pattern SuccI n = Succ NoExtField n
 
-test_checkableExprP :: TestTree
-test_checkableExprP =
+test_exprP :: TestTree
+test_exprP =
   testGroup
-    "checkableExprP"
+    "exprP"
     [ testGroup
         "Regression Test"
         [ testCase src $
