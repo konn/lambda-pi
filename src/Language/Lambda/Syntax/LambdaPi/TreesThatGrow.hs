@@ -807,6 +807,13 @@ instance HasBindeeType e => HasBindeeType (Maybe e) where
   type BindeeType (Maybe e) = BindeeType e
   bindeeType = (bindeeType =<<)
 
+infixl 6 <@>
+
+(<@>) :: DocM e () -> DocM e () -> DocM e ()
+l <@> r =
+  withPrecParens 11 $
+    l <+> withPrecedence 12 r
+
 instance
   ( Pretty PrettyEnv (AnnLHS phase)
   , Pretty PrettyEnv (AnnRHS phase)
@@ -851,9 +858,7 @@ instance
       withPrecedence 11 (pretty l) <+> colon <+> pretty r
   pretty Star {} = char '★'
   pretty (Var _ v) = text . fromMaybe "x" =<< varName v
-  pretty (App _ l r) =
-    withPrecParens 11 $
-      pretty l <+> withPrecedence 12 (pretty r)
+  pretty (App _ l r) = pretty l <@> pretty r
   pretty (Lam _ mv mp body) = withPrecParens 4 $ do
     let mArgTy = bindeeType mp
     var <- fromMaybe "x" <$> varName mv
@@ -899,25 +904,23 @@ instance
   pretty Nat {} = text "ℕ"
   pretty Zero {} = text "0"
   -- FIXME: compress numerals
-  pretty (Succ _ e) = withPrecParens 11 $ text "succ" <+> pretty e
+  pretty (Succ _ e) = text "succ" <@> pretty e
   pretty (NatElim _ t b i n) =
-    withPrecParens 11 $
-      text "natElim" <+> pretty t <+> pretty b <+> pretty i <+> pretty n
+    text "natElim" <@> pretty t <@> pretty b <@> pretty i <@> pretty n
   pretty (Vec _ a n) =
-    withPrecParens 11 $
-      text "Vec" <+> pretty a <+> pretty n
+    text "Vec" <@> pretty a <@> pretty n
   pretty (Nil _ a) =
-    withPrecParens 11 $ text "nil" <+> pretty a
+    text "nil" <@> pretty a
   pretty (Cons _ a n x xs) =
-    withPrecParens 11 $
-      text "cons"
-        <+> pretty a
-        <+> pretty n
-        <+> pretty x
-        <+> pretty xs
+    text "cons" <@> pretty a <@> pretty n <@> pretty x <@> pretty xs
   pretty (VecElim _ a t b i n xs) =
-    withPrecParens 11 $
-      text "vecElim" <+> pretty a <+> pretty t <+> pretty b <+> pretty i <+> pretty n <+> pretty xs
+    text "vecElim"
+      <@> pretty a
+      <@> pretty t
+      <@> pretty b
+      <@> pretty i
+      <@> pretty n
+      <@> pretty xs
   pretty (Record _ (RecordFieldTypes flds)) =
     braces $
       sep $
