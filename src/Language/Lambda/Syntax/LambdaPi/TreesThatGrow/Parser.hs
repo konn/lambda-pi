@@ -83,6 +83,16 @@ appSpaceP =
 termP :: Parser ParsedExpr
 termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> lamP <|> varP <|> parens exprP
 
+openP :: Parser ParsedExpr
+openP =
+  label "open expression" $
+    Open NoExtField
+      <$ reserved "open"
+      <*> exprP
+      <* between (symbol "{") (symbol "}") (reserved "..")
+      <* reserved "in"
+      <*> exprP
+
 piP :: Parser ParsedExpr
 piP = label "Pi-binding" $ do
   reserved "Π"
@@ -128,6 +138,7 @@ eliminatorsP :: Parser ParsedExpr
 eliminatorsP =
   natElim' <$ reserved "natElim"
     <|> vecElim' <$ reserved "vecElim"
+    <|> try openP
 
 natElim' :: ParsedExpr
 natElim' =
@@ -241,7 +252,7 @@ star = Star NoExtField
 compoundTyConP :: Parser ParsedExpr
 compoundTyConP =
   vecCon' <$ reserved "Vec"
-    <|> between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":"))
+    <|> try (between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":")))
 
 fieldSeqP ::
   String ->
@@ -288,7 +299,7 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record"]
+keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'

@@ -89,4 +89,7 @@ renameExprM = \case
       <$> mapM (mapM renameExprM) fs
   ProjField NoExtField e t ->
     flip (ProjField NoExtField) t <$> renameExprM e
+  Open NoExtField r b ->
+    -- FIXME: revisit here after structural subtyping is introduced
+    Open NoExtField <$> renameExprM r <*> renameExprM b
   XExpr x -> noExtCon x

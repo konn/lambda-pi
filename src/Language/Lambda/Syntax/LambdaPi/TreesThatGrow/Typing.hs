@@ -84,6 +84,7 @@ toInferable = \case
   MkRecord NoExtField (MkRecordFields flds) ->
     MkRecord NoExtField . MkRecordFields <$> mapM (mapM toInferable) flds
   ProjField NoExtField e fld -> flip (ProjField NoExtField) fld <$> toInferable e
+  Open NoExtField b f -> Open NoExtField <$> toInferable b <*> toInferable f
   XExpr x -> noExtCon x
 
 inf :: Expr Inferable -> Expr Checkable
@@ -127,6 +128,9 @@ toCheckable = \case
     MkRecord NoExtField . MkRecordFields <$> mapM (mapM toCheckable) flds
       <|> inf . MkRecord NoExtField . MkRecordFields <$> mapM (mapM toInferable) flds
   ProjField NoExtField e fld -> inf . flip (ProjField NoExtField) fld <$> toInferable e
+  Open NoExtField r b ->
+    Open NoExtField <$> toInferable r <*> toCheckable b
+      <|> fmap inf . Open NoExtField <$> toInferable r <*> toInferable b
   XExpr x -> noExtCon x
 
 data Value
@@ -234,6 +238,9 @@ eqAlpha MkRecord {} _ = False
 eqAlpha (ProjField _ f e) (ProjField _ f' e') =
   eqAlpha f f' && e == (e' :: Text)
 eqAlpha ProjField {} _ = False
+eqAlpha (Open _ r b) (Open _ r' b') =
+  eqAlpha r r' && eqAlpha b b'
+eqAlpha Open {} _ = False
 
 type Type = Value
 
@@ -300,6 +307,18 @@ typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
       <> show (pprint $ quote 0 ty)
       <> "', but got a lambda: "
       <> show (pprint lam)
+typeCheck i ctx (Open _ r b) ty = do
+  recType <- typeInfer i ctx r
+  -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
+  case recType of
+    VRecord fldTys -> do
+      let newCtx = HM.mapKeys Global $ HM.map (Nothing,) fldTys
+          ctx' = newCtx <> ctx
+      typeCheck i ctx' b ty
+    otr ->
+      Left $
+        "open expression requires a record, but got a term of type: "
+          <> show (pprint $ quote 0 otr)
 typeCheck _ _ (Ann c _ _) _ = noExtCon c
 typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c
@@ -425,6 +444,20 @@ typeInfer !i ctx (ProjField NoExtField e f) = do
       Left $
         "LHS of record projection must be record, but got: "
           <> show (e, quote 0 ty)
+typeInfer i ctx (Open _ r b) = do
+  recType <- typeInfer i ctx r
+  -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
+  case recType of
+    VRecord fldTys -> do
+      let newCtx =
+            HM.mapKeys Global $
+              HM.map (Nothing,) fldTys
+          ctx' = newCtx <> ctx
+      typeInfer i ctx' b
+    otr ->
+      Left $
+        "open expression requires a record, but got a term of type: "
+          <> show (pprint $ quote 0 otr)
 
 subst :: forall m. KnownTypingMode m => Int -> Expr Inferable -> Expr (Typing m) -> Expr (Typing m)
 subst !i r (Ann c e ty) = Ann c (subst i r e) (subst i r ty)
@@ -456,6 +489,8 @@ subst i r (MkRecord c (MkRecordFields flds)) =
     SInfer -> MkRecord c $ MkRecordFields $ map (fmap (subst i r)) flds
 subst i r (ProjField c e f) =
   ProjField c (subst i r e) f
+subst i r (Open NoExtField rc b) =
+  Open NoExtField (subst i r rc) (subst i r b)
 subst !i r bd@(XExpr (BVar j))
   | i == j = fromInferable r
   | otherwise = bd
@@ -603,6 +638,16 @@ eval ctx (Record _ flds) = VRecord $ HM.fromList $ map (Bi.second $ eval ctx) $ 
 eval ctx (MkRecord _ recs) =
   VRecord $ HM.fromList $ map (Bi.second $ eval ctx) $ mkRecFields recs
 eval ctx (ProjField _ e f) = evalProjField f $ eval ctx e
+eval ctx (Open _ rcd bdy) =
+  case eval ctx rcd of
+    -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
+    VMkRecord flds ->
+      let ctx' = ctx & #namedBinds %~ (flds <>)
+       in eval ctx' bdy
+    otr ->
+      error $
+        "Impossible: open requires a record, but got a term of type: "
+          <> show (pprint $ quote 0 otr)
 eval ctx (XExpr (Inf e)) = eval ctx e
 
 evalNatElim :: Value -> Value -> Value -> Value -> Value

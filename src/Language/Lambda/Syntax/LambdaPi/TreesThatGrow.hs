@@ -131,6 +131,9 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   -- **** Eliminators
   XProjField,
   ProjFieldRecord,
+  XOpen,
+  OpenRecord,
+  OpenBody,
 
   -- * Pretty-printing
   pprint,
@@ -704,6 +707,30 @@ deriving anyclass instance NFData (RecordField p) => NFData (MkRecordFields p)
 
 deriving anyclass instance Hashable (RecordField p) => Hashable (MkRecordFields p)
 
+type family XOpen p
+
+type instance XOpen Parse = NoExtField
+
+type instance XOpen Rename = NoExtField
+
+type instance XOpen (Typing m) = NoExtField
+
+type family OpenRecord p
+
+type instance OpenRecord Parse = Expr Parse
+
+type instance OpenRecord Rename = Expr Rename
+
+type instance OpenRecord (Typing m) = Expr Inferable
+
+type family OpenBody p
+
+type instance OpenBody Parse = Expr Parse
+
+type instance OpenBody Rename = Expr Rename
+
+type instance OpenBody (Typing m) = Expr (Typing m)
+
 type family XExpr p
 
 type instance XExpr Parse = NoExtCon
@@ -753,6 +780,8 @@ data Expr phase
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
   | ProjField (XProjField phase) (ProjFieldRecord phase) Text
+  | -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
+    Open (XOpen phase) (OpenRecord phase) (OpenBody phase)
   | XExpr (XExpr phase)
   deriving (Generic)
 
@@ -818,8 +847,8 @@ infixl 6 <@>
 
 (<@>) :: DocM e () -> DocM e () -> DocM e ()
 l <@> r =
-  withPrecParens 11 $
-    l <+> withPrecedence 12 r
+  withPrecParens 12 $
+    l <+> withPrecedence 13 r
 
 instance
   ( Pretty PrettyEnv (AnnLHS phase)
@@ -856,6 +885,8 @@ instance
   , Pretty PrettyEnv (RecordFieldType phase)
   , Pretty PrettyEnv (RecordField phase)
   , Pretty PrettyEnv (ProjFieldRecord phase)
+  , Pretty PrettyEnv (OpenRecord phase)
+  , Pretty PrettyEnv (OpenBody phase)
   , Pretty PrettyEnv (XExpr phase)
   ) =>
   Pretty PrettyEnv (Expr phase)
@@ -954,6 +985,9 @@ instance
           ]
   pretty (ProjField _ e fld) =
     withPrecParens 12 (pretty e <> "#" <> text fld)
+  pretty (Open _ recd body) =
+    withPrecParens 11 $
+      "open" <+> pretty recd <+> "in" <+> pretty body
   pretty (XExpr e) = pretty e
 
 instance Pretty PrettyEnv (XExprTyping m) where
