@@ -789,8 +789,14 @@ instance VarLike Name where
   varName (Local i) = do
     mtn <- preview $ #boundVars . ix i
     case mtn of
-      Just (t, n) -> pure $ Just $ t <> T.pack (show n)
-      Nothing -> error $ "Out of bound Local var: " <> show i
+      Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
+      Nothing -> do
+        bvar <- view #boundVars
+        error $
+          "Out of bound Local var: "
+            <> show i
+            <> " contexts: "
+            <> show bvar
   varName (Global t) = pure $ Just t
   varName q@Quote {} = error $ "Could not occur: " <> show q
 
@@ -863,12 +869,15 @@ instance
     let mArgTy = bindeeType mp
     var <- fromMaybe "x" <$> varName mv
     lvl <- views (#levels . at var) (fromMaybe 0)
+    let varN
+          | lvl > 0 = text var <> "_" <> pretty lvl
+          | otherwise = text var
     hang
       ( char 'λ'
           <+> appWhen
             (isJust mArgTy)
             parens
-            ( text var <+> forM_ mArgTy \ty ->
+            ( varN <+> forM_ mArgTy \ty ->
                 colon <+> pretty ty
             )
           <+> char '.'
@@ -885,12 +894,15 @@ instance
     let mArgTy = bindeeType mp
     var <- fromMaybe "x" <$> varName mv
     lvl <- views (#levels . at var) (fromMaybe 0)
+    let varN
+          | lvl > 0 = text var <> "_" <> pretty lvl
+          | otherwise = text var
     hang
       ( char 'Π'
           <+> appWhen
             (isJust mArgTy)
             parens
-            ( text var <+> forM_ mArgTy \ty ->
+            ( varN <+> forM_ mArgTy \ty ->
                 colon <+> pretty ty
             )
           <+> char '.'
@@ -945,7 +957,9 @@ instance Pretty PrettyEnv (XExprTyping m) where
   pretty (BVar i) = do
     mtn <- preview $ #boundVars . ix i
     case mtn of
-      Just (t, n) -> text t <> char '_' <> int n
+      Just (t, n)
+        | n > 0 -> text t <> char '_' <> int n
+        | otherwise -> text t <> int n
       Nothing -> error $ "Out of bound Local var: " <> show i
   pretty (Inf e) = pretty e
 
