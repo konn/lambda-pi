@@ -3,7 +3,6 @@
 module Control.Lens.Plated.Extra where
 
 import Control.Lens
-import Control.Lens.Plated
 import Control.Monad ((>=>))
 
 topDownMOf :: Monad m => Traversal' a a -> (a -> m a) -> a -> m a

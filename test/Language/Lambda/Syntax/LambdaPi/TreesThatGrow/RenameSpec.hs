@@ -1,13 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module Language.Lambda.Syntax.LambdaPi.TreesThatGrow.RenameSpec where
 
-import Data.List (foldl1')
-import Data.Text (Text)
-import qualified Data.Text as T
 import Language.Lambda.Syntax.LambdaPi.TreesThatGrow
 import Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename
 import Test.Tasty
