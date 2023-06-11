@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -35,6 +36,8 @@ renameExpr = runRenamer . renameExprM
 
 renameExprM :: Expr Parse -> Renamer (Expr Rename)
 renameExprM = \case
+  Var NoExtField "tt" -> pure $ Var NoExtField $ RnPrim Tt
+  Var NoExtField "Unit" -> pure $ Var NoExtField $ RnPrim Unit
   Var NoExtField v ->
     view (#boundVars . at v) <&> \case
       Just i -> Var NoExtField $ RnBound i
