@@ -37,8 +37,8 @@ renameExprM :: Expr Parse -> Renamer (Expr Rename)
 renameExprM = \case
   Var NoExtField v ->
     view (#boundVars . at v) <&> \case
-      Just i -> Var NoExtField $ Local i
-      Nothing -> Var NoExtField $ Global v
+      Just i -> Var NoExtField $ RnBound i
+      Nothing -> Var NoExtField $ RnGlobal v
   Ann NoExtField l r ->
     Ann NoExtField <$> renameExprM l <*> renameExprM r
   Star NoExtField -> pure $ Star NoExtField

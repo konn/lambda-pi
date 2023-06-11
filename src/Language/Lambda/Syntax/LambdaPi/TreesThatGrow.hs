@@ -36,6 +36,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
 
   -- * AST
   Name (..),
+  RnId (..),
   Expr (..),
   XExpr,
 
@@ -252,7 +253,12 @@ type family Id p
 
 type instance Id Parse = Text
 
-type instance Id Rename = FreeVar Rename
+type instance Id Rename = RnId
+
+data RnId
+  = RnGlobal Text
+  | RnBound !Int
+  deriving (Show, Eq, Ord, Generic)
 
 type instance Id (Typing m) = FreeVar (Typing m)
 
@@ -791,12 +797,9 @@ instance VarLike Name where
     case mtn of
       Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
       Nothing -> do
-        bvar <- view #boundVars
-        error $
-          "Out of bound Local var: "
-            <> show i
-            <> " contexts: "
-            <> show bvar
+        pure $
+          Just $
+            "<<Local: " <> T.pack (show i) <> ">>"
   varName (Global t) = pure $ Just t
   varName q@Quote {} = error $ "Could not occur: " <> show q
 
@@ -962,7 +965,7 @@ instance Pretty PrettyEnv (XExprTyping m) where
       Just (t, n)
         | n > 0 -> text t <> char '_' <> int n
         | otherwise -> text t <> int n
-      Nothing -> error $ "Out of bound Local var: " <> show i
+      Nothing -> "<<Global:" <> pretty i <> ">>"
   pretty (Inf e) = pretty e
 
 pprint :: Pretty PrettyEnv a => a -> Doc

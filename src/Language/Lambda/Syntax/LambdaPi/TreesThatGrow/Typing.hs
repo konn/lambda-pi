@@ -54,7 +54,8 @@ toInferable = \case
   Ann NoExtField l r -> Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r -> App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField v -> pure $ Var NoExtField v
+  Var NoExtField (RnGlobal v) -> pure $ Var NoExtField $ Global v
+  Var NoExtField (RnBound v) -> pure $ XExpr $ BVar v
   Lam NoExtField v minType body -> do
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
   Pi NoExtField mv srcTy dstTy ->
@@ -91,7 +92,8 @@ toCheckable = \case
   Ann NoExtField l r -> fmap inf . Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ inf $ Star NoExtField
   App NoExtField l r -> fmap inf . App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField v -> pure $ inf $ Var NoExtField v
+  Var NoExtField (RnGlobal v) -> pure $ inf $ Var NoExtField $ Global v
+  Var NoExtField (RnBound v) -> pure $ inf $ XExpr $ BVar v
   Lam NoExtField mv (Just ty) body ->
     do
       fmap inf . Lam NoExtField mv <$> toCheckable ty <*> toInferable body
@@ -181,8 +183,8 @@ typeCheck i ctx (XExpr (Inf e)) v = do
       actual = quote 0 v'
   unless (expect == actual) $
     Left $
-      "Type mismatch: (expected, actual) = "
-        <> show (pprint expect, pprint actual)
+      "Type mismatch: (expr, expected, actual) = "
+        <> show (pprint e, pprint expect, pprint actual)
 typeCheck i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord flds') =
   -- TODO: Consider structural subtyping
   Bi.first (("Checking record expression failed: " <>) . unlines . DLNE.toList) $
