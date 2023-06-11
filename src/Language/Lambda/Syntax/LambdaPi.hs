@@ -152,7 +152,11 @@ module Language.Lambda.Syntax.LambdaPi (
   -- *** Variants
   XVariant,
   VariantTags (..),
-  VariantTagArg,
+  VariantArgType,
+
+  -- **** Constructors
+  XInj,
+  InjArg,
 
   -- * Pretty-printing
   pprint,
@@ -214,6 +218,7 @@ data Expr phase
   | -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
     Open (XOpen phase) (OpenRecord phase) (OpenBody phase)
   | Variant (XVariant phase) (VariantTags phase)
+  | Inj (XInj phase) Text (InjArg phase)
   | XExpr (XExpr phase)
   deriving (Generic)
 
@@ -858,22 +863,40 @@ type instance XVariant (Typing 'Infer) = NoExtField
 
 type instance XVariant (Typing 'Check) = NoExtCon
 
-newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantTagArg p)]}
+newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantArgType p)]}
   deriving (Generic)
 
-deriving instance Show (VariantTagArg p) => Show (VariantTags p)
+deriving instance Show (VariantArgType p) => Show (VariantTags p)
 
-deriving instance Eq (VariantTagArg p) => Eq (VariantTags p)
+deriving instance Eq (VariantArgType p) => Eq (VariantTags p)
 
-deriving instance Ord (VariantTagArg p) => Ord (VariantTags p)
+deriving instance Ord (VariantArgType p) => Ord (VariantTags p)
 
-type family VariantTagArg p
+type family VariantArgType p
 
-type instance VariantTagArg Parse = Expr Parse
+type instance VariantArgType Parse = Expr Parse
 
-type instance VariantTagArg Rename = Expr Rename
+type instance VariantArgType Rename = Expr Rename
 
-type instance VariantTagArg (Typing p) = Expr Checkable
+type instance VariantArgType (Typing p) = Expr Checkable
+
+type family XInj p
+
+type instance XInj Parse = NoExtField
+
+type instance XInj Rename = NoExtField
+
+type instance XInj Inferable = NoExtCon
+
+type instance XInj Checkable = NoExtField
+
+type family InjArg p
+
+type instance InjArg Parse = Expr Parse
+
+type instance InjArg Rename = Expr Rename
+
+type instance InjArg (Typing e) = Expr (Typing e)
 
 type family XExpr p
 
@@ -988,7 +1011,8 @@ instance
   , Pretty PrettyEnv (ProjFieldRecord phase)
   , Pretty PrettyEnv (OpenRecord phase)
   , Pretty PrettyEnv (OpenBody phase)
-  , Pretty PrettyEnv (VariantTagArg phase)
+  , Pretty PrettyEnv (VariantArgType phase)
+  , Pretty PrettyEnv (InjArg phase)
   , Pretty PrettyEnv (XExpr phase)
   ) =>
   Pretty PrettyEnv (Expr phase)
@@ -1106,6 +1130,8 @@ instance
             [(text v <> colon) <+> pretty t | (v, t) <- vts]
         )
       <> "|)"
+  pretty (Inj _ tag b) =
+    "(|" <+> text tag <+> equals <+> pretty b <+> "|)"
   pretty (XExpr e) = pretty e
 
 instance Pretty PrettyEnv (XExprTyping m) where

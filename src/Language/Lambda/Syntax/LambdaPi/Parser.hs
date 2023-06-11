@@ -219,6 +219,7 @@ dataConP =
     <|> Lam NoExtField "n" (Just nat) (succ' $ var "n") <$ reserved "succ"
     <|> cons' <$ reserved "cons"
     <|> recordP
+    <|> varInjP
 
 recordP :: Parser ParsedExpr
 recordP =
@@ -267,7 +268,13 @@ recordTyP :: Parser ParsedExpr
 recordTyP = try (between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":")))
 
 variantTyP :: Parser ParsedExpr
-variantTyP = try (between (symbol "(|") (symbol "|)") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "tag" (symbol "|") (symbol ":")))
+variantTyP = try (between (symbol "(|") (symbol "|)") (Variant NoExtField . VariantTags <$> fieldSeqP "tag" (try $ symbol "|" <* notFollowedBy (symbol ")")) (symbol ":")))
+
+varInjP :: Parser ParsedExpr
+varInjP =
+  try $
+    between (symbol "(|") (symbol "|)") $
+      Inj NoExtField <$> identifier <* reservedOp "=" <*> exprP
 
 fieldSeqP ::
   String ->
@@ -369,13 +376,13 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
 parens :: Parser a -> Parser a
-parens = between (symbol "(" <* notFollowedBy (symbol "|")) (symbol ")")
+parens = try . between (symbol "(" <* notFollowedBy (symbol "|")) (symbol ")")
 
 symbol :: Text -> Parser Text
 symbol = L.symbol space
 
 reservedOpNames :: HashSet Text
-reservedOpNames = HS.fromList ["->", "→", ":", "#"]
+reservedOpNames = HS.fromList ["->", "→", ":", "#", "|", "="]
 
 parseOnly ::
   Parser a ->

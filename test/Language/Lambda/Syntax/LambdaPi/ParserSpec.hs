@@ -84,6 +84,9 @@ inputCases =
         (MkRecord NoExtField $ MkRecordFields [("f", succE), ("ty", nat :~> nat)])
         (App NoExtField (ProjField NoExtField (var "Rec") "f") zero)
     )
+  , ("(| int : Nat |)", Variant NoExtField $ VariantTags [("int", nat)])
+  , -- FIXME: more stylish syntax
+    ("(| int = Nat |)", Inj NoExtField "int" nat)
   ]
 
 succE :: Expr Parse

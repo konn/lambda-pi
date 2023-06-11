@@ -103,4 +103,6 @@ renameExprM = \case
     Open NoExtField <$> renameExprM r <*> renameExprM b
   Variant NoExtField (VariantTags vs) ->
     Variant NoExtField . VariantTags <$> mapM (mapM renameExprM) vs
+  Inj NoExtField tag p ->
+    Inj NoExtField tag <$> renameExprM p
   XExpr x -> noExtCon x
