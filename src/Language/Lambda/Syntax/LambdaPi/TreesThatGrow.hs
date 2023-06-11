@@ -989,7 +989,7 @@ instance
     withPrecParens 12 (pretty e <> "#" <> text fld)
   pretty (Open _ recd body) =
     withPrecParens 11 $
-      "open" <+> pretty recd <+> "in" <+> pretty body
+      "open" <+> pretty recd <+> "{..}" <+> "in" <+> pretty body
   pretty (XExpr e) = pretty e
 
 instance Pretty PrettyEnv (XExprTyping m) where
