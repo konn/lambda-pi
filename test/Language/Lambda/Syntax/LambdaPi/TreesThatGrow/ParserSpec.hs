@@ -71,6 +71,10 @@ inputCases =
         )
         "bar"
     )
+  ,
+    ( "λ (x : rec.foo). x"
+    , Lam "x" (Just $ ProjField NoExtField (var "rec") "foo") (var "x")
+    )
   ]
 
 test_exprP :: TestTree
