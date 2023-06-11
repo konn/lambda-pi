@@ -49,7 +49,7 @@ inputCases =
     )
   ,
     ( "record {a = Nat, b = succ}"
-    , MkRecord NoExtField $ MkRecordFields [("a", nat), ("b", Lam NoExtField "n" (Just nat) (succ' $ var "n"))]
+    , MkRecord NoExtField $ MkRecordFields [("a", nat), ("b", succE)]
     )
   , ("rec.foo", ProjField NoExtField (var "rec") "foo")
   ,
@@ -76,7 +76,18 @@ inputCases =
     ( "λ (x : rec.foo). x"
     , Lam NoExtField "x" (Just $ ProjField NoExtField (var "rec") "foo") (var "x")
     )
+  ,
+    ( "let Rec = record { f = succ, ty = Nat -> Nat } in Rec.f 0"
+    , Let
+        NoExtField
+        "Rec"
+        (MkRecord NoExtField $ MkRecordFields [("f", succE), ("ty", nat :~> nat)])
+        (App NoExtField (ProjField NoExtField (var "Rec") "f") zero)
+    )
   ]
+
+succE :: Expr Parse
+succE = Lam NoExtField "n" (Just nat) (succ' $ var "n")
 
 test_exprP :: TestTree
 test_exprP =
