@@ -10,6 +10,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -19,13 +20,17 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   Parse,
   Rename,
   Typing,
+  TypingExpr (..),
   TypingMode (..),
+  STypingMode (..),
+  KnownTypingMode (..),
   Inferable,
   Checkable,
 
   -- * AST
   Name (..),
   Expr (..),
+  XExpr,
 
   -- ** TTG types
   NoExtField (..),
@@ -46,6 +51,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   XVar,
   Id,
   Var (..),
+  castVar,
   BoundVar,
   FreeVar,
 
@@ -121,6 +127,7 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
 
 import Control.Lens.Plated
 import Data.Hashable (Hashable)
+import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Generics (Generic, Rep)
 import GHC.Generics.Constraint
@@ -130,14 +137,25 @@ data Name = Global Text | Local Int | Quote Int
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (Hashable)
 
-type family XAnn phase
-
 data Parse deriving (Show, Eq, Ord, Generic)
 
 data Rename deriving (Show, Eq, Ord, Generic)
 
 data TypingMode = Infer | Check
   deriving (Show, Eq, Ord, Generic)
+
+data STypingMode (m :: TypingMode) where
+  SInfer :: STypingMode 'Infer
+  SCheck :: STypingMode 'Check
+
+class KnownTypingMode m where
+  typingModeVal :: STypingMode m
+
+instance KnownTypingMode 'Infer where
+  typingModeVal = SInfer
+
+instance KnownTypingMode 'Check where
+  typingModeVal = SCheck
 
 data Typing (typeMode :: TypingMode)
   deriving (Show, Eq, Ord, Generic)
@@ -155,11 +173,15 @@ type Inferable = Typing 'Infer
 
 type Checkable = Typing 'Check
 
+type family XAnn phase
+
 type instance XAnn Parse = NoExtField
 
 type instance XAnn Rename = NoExtField
 
-type instance XAnn Checkable = NoExtField
+type instance XAnn Inferable = NoExtField
+
+type instance XAnn Checkable = NoExtCon
 
 type family AnnLHS a
 
@@ -183,7 +205,9 @@ type instance XStar Parse = NoExtField
 
 type instance XStar Rename = NoExtField
 
-type instance XStar (Typing _) = NoExtField
+type instance XStar Inferable = NoExtField
+
+type instance XStar Checkable = NoExtCon
 
 type family XVar p
 
@@ -191,15 +215,24 @@ type instance XVar Parse = NoExtField
 
 type instance XVar Rename = NoExtField
 
-type instance XVar (Typing _) = NoExtField
+type instance XVar Inferable = NoExtField
+
+type instance XVar Checkable = NoExtCon
 
 type family Id p
 
 type instance Id Parse = Text
 
-type instance Id Rename = Var Rename
+type instance Id Rename = FreeVar Rename
 
-type instance Id (Typing m) = Var (Typing m)
+type instance Id (Typing m) = FreeVar (Typing m)
+
+castVar ::
+  (BoundVar p ~ BoundVar p', FreeVar p ~ FreeVar p') =>
+  Var p ->
+  Var p'
+castVar (Bound b) = Bound b
+castVar (Free b) = Free b
 
 data Var p
   = Bound (BoundVar p)
@@ -242,7 +275,7 @@ type instance XApp Rename = NoExtField
 
 type instance XApp Inferable = NoExtField
 
-type instance XApp Checkable = NoExtField
+type instance XApp Checkable = NoExtCon
 
 type family AppLHS p
 
@@ -266,9 +299,7 @@ type instance XLam Parse = Text
 
 type instance XLam Rename = NoExtField
 
-type instance XLam Inferable = NoExtField
-
-type instance XLam Checkable = NoExtField
+type instance XLam (Typing _) = NoExtField
 
 type family LamBindType p
 
@@ -286,9 +317,7 @@ type instance LamBody Parse = Expr Parse
 
 type instance LamBody Rename = Expr Rename
 
-type instance LamBody Inferable = Expr Inferable
-
-type instance LamBody Checkable = Expr Checkable
+type instance LamBody (Typing m) = Expr (Typing m)
 
 type family XPi p
 
@@ -296,7 +325,9 @@ type instance XPi Parse = NoExtField
 
 type instance XPi Rename = NoExtField
 
-type instance XPi (Typing m) = NoExtField
+type instance XPi Inferable = NoExtField
+
+type instance XPi Checkable = NoExtCon
 
 type family PiVarName p
 
@@ -320,7 +351,7 @@ type instance PiRHS Parse = Expr Parse
 
 type instance PiRHS Rename = Expr Rename
 
-type instance PiRHS (Typing m) = Expr Checkable
+type instance PiRHS (Typing _) = Expr Checkable
 
 type family XNat p
 
@@ -328,7 +359,9 @@ type instance XNat Parse = NoExtField
 
 type instance XNat Rename = NoExtField
 
-type instance XNat (Typing _) = NoExtField
+type instance XNat Inferable = NoExtField
+
+type instance XNat Checkable = NoExtCon
 
 type family XZero p
 
@@ -336,7 +369,9 @@ type instance XZero Parse = NoExtField
 
 type instance XZero Rename = NoExtField
 
-type instance XZero (Typing _) = NoExtField
+type instance XZero Inferable = NoExtField
+
+type instance XZero Checkable = NoExtCon
 
 type family XSucc p
 
@@ -344,7 +379,9 @@ type instance XSucc Parse = NoExtField
 
 type instance XSucc Rename = NoExtField
 
-type instance XSucc (Typing _) = NoExtField
+type instance XSucc Inferable = NoExtField
+
+type instance XSucc Checkable = NoExtCon
 
 type family SuccBody p
 
@@ -360,7 +397,9 @@ type instance XNatElim Parse = NoExtField
 
 type instance XNatElim Rename = NoExtField
 
-type instance XNatElim (Typing _) = NoExtField
+type instance XNatElim Inferable = NoExtField
+
+type instance XNatElim Checkable = NoExtCon
 
 type family NatElimRetFamily a
 
@@ -400,7 +439,9 @@ type instance XVec Parse = NoExtField
 
 type instance XVec Rename = NoExtField
 
-type instance XVec (Typing _) = NoExtField
+type instance XVec Inferable = NoExtField
+
+type instance XVec Checkable = NoExtCon
 
 type family VecType p
 
@@ -424,7 +465,9 @@ type instance XNil Parse = NoExtField
 
 type instance XNil Rename = NoExtField
 
-type instance XNil (Typing _) = NoExtField
+type instance XNil Inferable = NoExtField
+
+type instance XNil Checkable = NoExtCon
 
 type family NilType p
 
@@ -440,7 +483,9 @@ type instance XCons Parse = NoExtField
 
 type instance XCons Rename = NoExtField
 
-type instance XCons (Typing _) = NoExtField
+type instance XCons Inferable = NoExtField
+
+type instance XCons Checkable = NoExtCon
 
 type family ConsType p
 
@@ -480,7 +525,9 @@ type instance XVecElim Parse = NoExtField
 
 type instance XVecElim Rename = NoExtField
 
-type instance XVecElim (Typing _) = NoExtField
+type instance XVecElim Inferable = NoExtField
+
+type instance XVecElim Checkable = NoExtCon
 
 type family VecElimEltType p
 
@@ -536,7 +583,9 @@ type instance XRecord Parse = NoExtField
 
 type instance XRecord Rename = NoExtField
 
-type instance XRecord (Typing _) = NoExtField
+type instance XRecord Inferable = NoExtField
+
+type instance XRecord Checkable = NoExtCon
 
 type family RecordFieldType p
 
@@ -564,7 +613,9 @@ type instance XProjField Parse = NoExtField
 
 type instance XProjField Rename = NoExtField
 
-type instance XProjField (Typing _) = NoExtField
+type instance XProjField Inferable = NoExtField
+
+type instance XProjField Checkable = NoExtCon
 
 type family ProjFieldRecord p
 
@@ -596,7 +647,7 @@ type instance RecordField Parse = Expr Parse
 
 type instance RecordField Rename = Expr Rename
 
-type instance RecordField (Typing _) = Expr Checkable
+type instance RecordField (Typing m) = Expr (Typing m)
 
 newtype MkRecordFields p = MkRecordFields {mkRecFields :: [(Text, RecordField p)]}
   deriving (Generic)
@@ -610,6 +661,25 @@ deriving instance Ord (RecordField p) => Ord (MkRecordFields p)
 deriving anyclass instance NFData (RecordField p) => NFData (MkRecordFields p)
 
 deriving anyclass instance Hashable (RecordField p) => Hashable (MkRecordFields p)
+
+type family XExpr p
+
+type instance XExpr Parse = NoExtCon
+
+type instance XExpr Rename = NoExtCon
+
+type instance XExpr (Typing m) = TypingExpr m
+
+type TypingExpr :: TypingMode -> Type
+data TypingExpr m where
+  BVar :: Int -> TypingExpr 'Infer
+  Inf :: Expr Inferable -> TypingExpr 'Check
+
+deriving instance Show (TypingExpr m)
+
+deriving instance Eq (TypingExpr m)
+
+deriving instance Ord (TypingExpr m)
 
 data Expr phase
   = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
@@ -641,6 +711,7 @@ data Expr phase
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
   | ProjField (XProjField phase) (ProjFieldRecord phase) (RecordFieldSelector phase)
+  | XExpr (XExpr phase)
   deriving (Generic)
 
 instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where

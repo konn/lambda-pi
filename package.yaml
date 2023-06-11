@@ -31,6 +31,8 @@ dependencies:
 - deriving-compat
 - diagnose
 - dlist
+- either
+- these
 - equational-reasoning
 - fmlist
 - generic-lens
@@ -46,6 +48,7 @@ dependencies:
 - parsers
 - rio
 - rio-orphans
+- semialign
 - semigroups
 - semigroupoids
 - some

@@ -36,6 +36,7 @@ library
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename
+      Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Typing
   other-modules:
       Paths_lambda_pi
   hs-source-dirs:
@@ -53,6 +54,7 @@ library
     , deriving-compat
     , diagnose
     , dlist
+    , either
     , equational-reasoning
     , fmlist
     , generic-deriving
@@ -68,11 +70,13 @@ library
     , parsers
     , rio
     , rio-orphans
+    , semialign
     , semigroupoids
     , semigroups
     , some
     , split
     , text
+    , these
     , transformers
     , type-natural
     , unordered-containers
@@ -98,6 +102,7 @@ executable lambda-pi-exe
     , deriving-compat
     , diagnose
     , dlist
+    , either
     , equational-reasoning
     , fmlist
     , generic-deriving
@@ -114,11 +119,13 @@ executable lambda-pi-exe
     , parsers
     , rio
     , rio-orphans
+    , semialign
     , semigroupoids
     , semigroups
     , some
     , split
     , text
+    , these
     , transformers
     , type-natural
     , unordered-containers
@@ -149,6 +156,7 @@ test-suite lambda-pi-test
     , deriving-compat
     , diagnose
     , dlist
+    , either
     , equational-reasoning
     , fmlist
     , generic-deriving
@@ -165,6 +173,7 @@ test-suite lambda-pi-test
     , parsers
     , rio
     , rio-orphans
+    , semialign
     , semigroupoids
     , semigroups
     , some
@@ -173,6 +182,7 @@ test-suite lambda-pi-test
     , tasty-hunit
     , tasty-quickcheck
     , text
+    , these
     , transformers
     , type-natural
     , unordered-containers

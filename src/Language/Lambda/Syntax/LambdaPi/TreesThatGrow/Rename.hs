@@ -1,11 +1,9 @@
 {-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -39,8 +37,8 @@ renameExprM :: Expr Parse -> Renamer (Expr Rename)
 renameExprM = \case
   Var NoExtField v ->
     view (#boundVars . at v) <&> \case
-      Just i -> Var NoExtField $ Bound i
-      Nothing -> Var NoExtField $ Free $ Global v
+      Just i -> Var NoExtField $ Local i
+      Nothing -> Var NoExtField $ Global v
   Ann NoExtField l r ->
     Ann NoExtField <$> renameExprM l <*> renameExprM r
   Star NoExtField -> pure $ Star NoExtField
@@ -91,3 +89,4 @@ renameExprM = \case
       <$> mapM (mapM renameExprM) fs
   ProjField NoExtField e t ->
     flip (ProjField NoExtField) t <$> renameExprM e
+  XExpr x -> noExtCon x
