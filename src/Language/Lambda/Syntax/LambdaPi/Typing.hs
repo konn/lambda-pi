@@ -88,6 +88,9 @@ toInferable = \case
     MkRecord NoExtField . MkRecordFields <$> mapM (mapM toInferable) flds
   ProjField NoExtField e fld -> flip (ProjField NoExtField) fld <$> toInferable e
   Open NoExtField b f -> Open NoExtField <$> toInferable b <*> toInferable f
+  Variant _ (VariantTags fs) ->
+    Variant NoExtField . VariantTags
+      <$> mapM (mapM toCheckable) fs
   XExpr x -> noExtCon x
 
 inf :: Expr Inferable -> Expr Checkable
@@ -138,6 +141,9 @@ toCheckable = \case
   Open NoExtField r b ->
     Open NoExtField <$> toInferable r <*> toCheckable b
       <|> fmap inf . Open NoExtField <$> toInferable r <*> toInferable b
+  Variant NoExtField (VariantTags fs) ->
+    inf . Variant NoExtField . VariantTags
+      <$> mapM (mapM toCheckable) fs
   XExpr x -> noExtCon x
 
 data Value
@@ -149,9 +155,9 @@ data Value
   | VPi (Maybe Text) Value (Value -> Value)
   | VNeutral Neutral
   | VVec Value Value
-  | --  | VVariant (HashMap Text Value)
-    VRecord (HashMap Text Value)
+  | VRecord (HashMap Text Value)
   | VMkRecord (HashMap Text Value)
+  | VVariant (HashMap Text Value)
   | VNil Value
   | VCons Value Value Value Value
   deriving (Generic)
@@ -251,6 +257,17 @@ eqAlpha ProjField {} _ = False
 eqAlpha (Open _ r b) (Open _ r' b') =
   eqAlpha r r' && eqAlpha b b'
 eqAlpha Open {} _ = False
+eqAlpha (Variant _ (VariantTags fs)) (Variant _ (VariantTags fs')) =
+  and $
+    alignWith
+      ( \case
+          This {} -> False
+          That {} -> False
+          These l r -> eqAlpha l r
+      )
+      (Map.fromList fs)
+      (Map.fromList fs')
+eqAlpha Variant {} _ = False
 
 type Type = Value
 
@@ -350,6 +367,7 @@ typeCheck _ _ (Nil c _) _ = noExtCon c
 typeCheck _ _ (Cons c _ _ _ _) _ = noExtCon c
 typeCheck _ _ (VecElim c _ _ _ _ _ _) _ = noExtCon c
 typeCheck _ _ (Record c _) _ = noExtCon c
+typeCheck _ _ (Variant c _) _ = noExtCon c
 
 typeInfer :: Int -> Context -> Expr Inferable -> Result Type
 typeInfer !i ctx (Ann _ e rho) = do
@@ -480,6 +498,9 @@ typeInfer i ctx (Open _ r b) = do
       Left $
         "open expression requires a record, but got a term of type: "
           <> show (pprint $ quote 0 otr)
+typeInfer i ctx (Variant NoExtField (VariantTags fs)) = do
+  VStar
+    <$ traverse_ (flip (typeCheck i ctx) VStar . snd) fs
 
 inferPrim :: Prim -> Type
 inferPrim Tt = VNeutral $ NPrim Unit
@@ -523,6 +544,8 @@ subst !i r bd@(XExpr (BVar j))
   | i == j = fromInferable r
   | otherwise = bd
 subst !i r (XExpr (Inf e)) = XExpr $ Inf $ subst i r e
+subst i r (Variant c (VariantTags flds)) =
+  Variant c $ VariantTags $ map (fmap (subst i r)) flds
 
 fromInferable :: forall m. KnownTypingMode m => Expr Inferable -> Expr (Typing m)
 fromInferable =
@@ -554,6 +577,7 @@ substLocal i v (VCons va va' va2 va3) =
 -- substLocal i v (VVariant vars) = VVariant $ fmap (substLocal i v) vars
 substLocal i v (VRecord flds) = VRecord $ fmap (substLocal i v) flds
 substLocal i v (VMkRecord flds) = VMkRecord $ fmap (substLocal i v) flds
+substLocal i v (VVariant flds) = VVariant $ fmap (substLocal i v) flds
 
 substLocalNeutral :: Int -> Value -> Neutral -> Either Neutral Value
 substLocalNeutral i v (NFree (Local j))
@@ -618,6 +642,12 @@ quote i (VRecord flds) =
           fmap (quote i) flds
 quote i (VMkRecord flds) =
   MkRecord NoExtField $ MkRecordFields $ HM.toList $ fmap (quote i) flds
+quote i (VVariant flds) =
+  inf $
+    Variant NoExtField $
+      VariantTags $
+        HM.toList $
+          fmap (quote i) flds
 
 quoteNeutral :: Int -> Neutral -> Expr Inferable
 quoteNeutral i (NFree x) = boundFree i x
@@ -683,6 +713,7 @@ eval ctx (Open _ rcd bdy) =
       error $
         "Impossible: open requires a record, but got a term of type: "
           <> show (pprint $ quote 0 otr)
+eval ctx (Variant _ flds) = VVariant $ HM.fromList $ map (Bi.second $ eval ctx) $ variantTags flds
 eval ctx (XExpr (Inf e)) = eval ctx e
 
 evalNatElim :: Value -> Value -> Value -> Value -> Value

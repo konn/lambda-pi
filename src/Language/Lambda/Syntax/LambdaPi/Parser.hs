@@ -261,9 +261,13 @@ star :: Expr Parse
 star = Star NoExtField
 
 compoundTyConP :: Parser ParsedExpr
-compoundTyConP =
-  vecCon' <$ reserved "Vec"
-    <|> try (between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":")))
+compoundTyConP = vecCon' <$ reserved "Vec" <|> recordTyP <|> variantTyP
+
+recordTyP :: Parser ParsedExpr
+recordTyP = try (between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":")))
+
+variantTyP :: Parser ParsedExpr
+variantTyP = try (between (symbol "(|") (symbol "|)") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "tag" (symbol "|") (symbol ":")))
 
 fieldSeqP ::
   String ->

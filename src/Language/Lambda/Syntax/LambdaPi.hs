@@ -132,7 +132,7 @@ module Language.Lambda.Syntax.LambdaPi (
   VecElimLength,
   VecElimInput,
 
-  -- *** Record
+  -- *** Records
   XRecord,
   RecordFieldTypes (..),
   RecordFieldType,
@@ -148,6 +148,11 @@ module Language.Lambda.Syntax.LambdaPi (
   XOpen,
   OpenRecord,
   OpenBody,
+
+  -- *** Variants
+  XVariant,
+  VariantTags (..),
+  VariantTagArg,
 
   -- * Pretty-printing
   pprint,
@@ -208,6 +213,7 @@ data Expr phase
   | ProjField (XProjField phase) (ProjFieldRecord phase) Text
   | -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
     Open (XOpen phase) (OpenRecord phase) (OpenBody phase)
+  | Variant (XVariant phase) (VariantTags phase)
   | XExpr (XExpr phase)
   deriving (Generic)
 
@@ -842,6 +848,33 @@ type instance OpenBody Rename = Expr Rename
 
 type instance OpenBody (Typing m) = Expr (Typing m)
 
+type family XVariant p
+
+type instance XVariant Parse = NoExtField
+
+type instance XVariant Rename = NoExtField
+
+type instance XVariant (Typing 'Infer) = NoExtField
+
+type instance XVariant (Typing 'Check) = NoExtCon
+
+newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantTagArg p)]}
+  deriving (Generic)
+
+deriving instance Show (VariantTagArg p) => Show (VariantTags p)
+
+deriving instance Eq (VariantTagArg p) => Eq (VariantTags p)
+
+deriving instance Ord (VariantTagArg p) => Ord (VariantTags p)
+
+type family VariantTagArg p
+
+type instance VariantTagArg Parse = Expr Parse
+
+type instance VariantTagArg Rename = Expr Rename
+
+type instance VariantTagArg (Typing p) = Expr Checkable
+
 type family XExpr p
 
 type instance XExpr Parse = NoExtCon
@@ -955,6 +988,7 @@ instance
   , Pretty PrettyEnv (ProjFieldRecord phase)
   , Pretty PrettyEnv (OpenRecord phase)
   , Pretty PrettyEnv (OpenBody phase)
+  , Pretty PrettyEnv (VariantTagArg phase)
   , Pretty PrettyEnv (XExpr phase)
   ) =>
   Pretty PrettyEnv (Expr phase)
@@ -1064,6 +1098,14 @@ instance
   pretty (Open _ recd body) =
     withPrecParens 11 $
       "open" <+> pretty recd <+> "{..}" <+> "in" <+> pretty body
+  pretty (Variant _ (VariantTags vts)) =
+    "(|"
+      <> sep
+        ( punctuate
+            "|"
+            [(text v <> colon) <+> pretty t | (v, t) <- vts]
+        )
+      <> "|)"
   pretty (XExpr e) = pretty e
 
 instance Pretty PrettyEnv (XExprTyping m) where

@@ -101,4 +101,6 @@ renameExprM = \case
   Open NoExtField r b ->
     -- FIXME: revisit here after structural subtyping is introduced
     Open NoExtField <$> renameExprM r <*> renameExprM b
+  Variant NoExtField (VariantTags vs) ->
+    Variant NoExtField . VariantTags <$> mapM (mapM renameExprM) vs
   XExpr x -> noExtCon x
