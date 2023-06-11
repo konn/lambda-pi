@@ -183,18 +183,18 @@ stmtP = clearP <|> letP <|> assumeP <|> Eval <$> exprP
 clearP :: Parser Stmt
 clearP =
   Clear
-    <$ reserved "clear"
+    <$ reserved ":clear"
     <*> optional identifier
 
 assumeP :: Parser Stmt
 assumeP =
   Assume
-    <$ reserved "assume"
+    <$ reserved ":assume"
     <*> (mapM (mapM (maybe (fail "No annotation") pure)) =<< binders)
 
 letP :: Parser Stmt
 letP =
-  try $ LetS <$ reserved "let" <*> identifier <* symbol "=" <*> exprP
+  try $ LetS <$ reserved ":let" <*> identifier <* symbol "=" <*> exprP
 
 readEvalPrintM ::
   ( MonadThrow m
