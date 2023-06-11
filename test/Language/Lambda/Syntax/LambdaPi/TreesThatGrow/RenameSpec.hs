@@ -19,7 +19,7 @@ inputCases =
           App NoExtField (var "f") (var "x")
     , Lam NoExtField Nothing $
         Lam NoExtField Nothing $
-          App NoExtField (var $ Bound 1) (var $ Bound 0)
+          App NoExtField (var $ Local 1) (var $ Local 0)
     )
   ]
 
