@@ -81,7 +81,16 @@ appSpaceP =
       )
 
 termP :: Parser ParsedExpr
-termP = primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> lamP <|> varP <|> parens exprP
+termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> lamP <|> varP <|> parens exprP
+
+piP :: Parser ParsedExpr
+piP = label "Pi-binding" $ do
+  reserved "Π"
+  bindees <- sconcat <$> NE.some annBinder <* symbol "."
+  foldr
+    (\(v, ty) p -> Pi NoExtField (DepNamed v) ty <$> p)
+    exprP
+    bindees
 
 lamP :: Parser ParsedExpr
 lamP = do
@@ -104,6 +113,16 @@ binder =
         <*> (Just <$> exprP <?> "variable type")
     )
     <|> fmap (,Nothing) <$> NE.some identifier
+
+annBinder :: Parser (NonEmpty (Text, ParsedExpr))
+annBinder =
+  parens
+    ( flip (fmap . flip (,))
+        <$> NE.some identifier
+        <* symbol ":"
+        <*> exprP
+        <?> "variable type"
+    )
 
 eliminatorsP :: Parser ParsedExpr
 eliminatorsP =
