@@ -173,8 +173,8 @@ typeCheck i ctx (XExpr (Inf e)) v = do
   v' <- typeInfer i ctx e
   unless (quote 0 v == quote 0 v') $
     Left "Type mismatch (inf)" -- FIXME: Pretty print
-    -- TODO: Consider structural subtyping
 typeCheck i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord flds') =
+  -- TODO: Consider structural subtyping
   Bi.first (("Checking record expression failed: " <>) . unlines . DLNE.toList) $
     validationToEither $
       sequenceA_ $
@@ -197,7 +197,8 @@ typeCheck i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord flds') =
           (HM.fromList flds)
           flds'
 typeCheck _ _ _mkRec@MkRecord {} _ty =
-  Left "Given records, but expected other types" -- FIXME: pretty print
+  -- FIXME: pretty print
+  Left "Given records, but expected other types"
 typeCheck _ _ (ProjField c _ _) _ = noExtCon c
 typeCheck i ctx (Lam NoExtField _ e) (VPi ty ty') = do
   typeCheck
@@ -208,7 +209,8 @@ typeCheck i ctx (Lam NoExtField _ e) (VPi ty ty') = do
     $ vfree
     $ Local i
 typeCheck _ _ (Lam NoExtField _ _e) _ty =
-  Left "Expected other type, but got lambda" -- FIXME: pretty print
+  -- FIXME: pretty print
+  Left "Expected other type, but got lambda"
 typeCheck _ _ (Ann c _ _) _ = noExtCon c
 typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c
