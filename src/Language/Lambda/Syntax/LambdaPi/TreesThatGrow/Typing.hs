@@ -262,7 +262,7 @@ typeInfer !i ctx (App NoExtField e e') = do
     ty ->
       Left $
         "LHS of application must be has a function type, but got: "
-          <> show (e, quote 0 ty)
+          <> show (pprint e, pprint $ quote 0 ty)
 typeInfer i ctx (Lam NoExtField _ ty body) = do
   let ctx' = toEvalContext ctx
   typeCheck i ctx ty VStar
