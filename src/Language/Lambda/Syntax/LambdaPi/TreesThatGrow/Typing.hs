@@ -33,13 +33,15 @@ import Data.Bifunctor qualified as Bi
 import Data.DList.DNonEmpty qualified as DLNE
 import Data.Either.Validation
 import Data.Foldable (sequenceA_, traverse_)
-import Data.Function (fix)
+import Data.Function (fix, on)
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
 import Data.List
 import Data.List.NonEmpty (NonEmpty)
+import Data.Map qualified as Map
 import Data.Maybe
+import Data.Semialign (Semialign (..))
 import Data.Semialign.Indexed
 import Data.Semigroup.Generic
 import Data.Sequence (Seq)
@@ -164,6 +166,75 @@ data Env = Env
   deriving ({- Show, -} Generic)
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid Env
 
+instance Eq Value where
+  (==) = eqAlpha `on` quote 0
+
+eqAlpha :: Expr (Typing m) -> Expr (Typing m) -> Bool
+eqAlpha (XExpr (Inf a)) (XExpr (Inf b)) = eqAlpha a b
+eqAlpha (XExpr (BVar i)) (XExpr (BVar j)) = i == j
+eqAlpha XExpr {} _ = False
+eqAlpha (Ann _ l r) (Ann _ l' r') = eqAlpha l l' && eqAlpha r r'
+eqAlpha Ann {} _ = False
+eqAlpha Star {} Star {} = True
+eqAlpha Star {} _ = False
+eqAlpha (Var _ v) (Var _ v') = v == v'
+eqAlpha Var {} _ = False
+eqAlpha (App _ l r) (App _ l' r') = eqAlpha l l' && eqAlpha r r'
+eqAlpha App {} _ = False
+eqAlpha (Lam _ _ _ b) (Lam _ _ _ b') = eqAlpha b b'
+eqAlpha Lam {} _ = False
+eqAlpha (Pi _ _ l r) (Pi _ _ l' r') = eqAlpha l l' && eqAlpha r r'
+eqAlpha Pi {} _ = False
+eqAlpha Nat {} Nat {} = True
+eqAlpha Nat {} _ = False
+eqAlpha Zero {} Zero {} = True
+eqAlpha Zero {} _ = False
+eqAlpha (Succ _ v) (Succ _ v') = eqAlpha v v'
+eqAlpha Succ {} _ = False
+eqAlpha (NatElim _ t b i n) (NatElim _ t' b' i' n') =
+  eqAlpha t t' && eqAlpha b b' && eqAlpha i i' && eqAlpha n n'
+eqAlpha NatElim {} _ = False
+eqAlpha (Vec _ l r) (Vec _ l' r') = eqAlpha l l' && eqAlpha r r'
+eqAlpha Vec {} _ = False
+eqAlpha (Nil _ v) (Nil _ v') = eqAlpha v v'
+eqAlpha Nil {} _ = False
+eqAlpha (Cons _ t b i n) (Cons _ t' b' i' n') =
+  eqAlpha t t' && eqAlpha b b' && eqAlpha i i' && eqAlpha n n'
+eqAlpha Cons {} _ = False
+eqAlpha (VecElim _ x t b i n xs) (VecElim _ x' t' b' i' n' xs') =
+  eqAlpha x x'
+    && eqAlpha t t'
+    && eqAlpha b b'
+    && eqAlpha i i'
+    && eqAlpha n n'
+    && eqAlpha xs xs'
+eqAlpha VecElim {} _ = False
+eqAlpha (Record _ (RecordFieldTypes fs)) (Record _ (RecordFieldTypes fs')) =
+  and $
+    alignWith
+      ( \case
+          This {} -> False
+          That {} -> False
+          These l r -> eqAlpha l r
+      )
+      (Map.fromList fs)
+      (Map.fromList fs')
+eqAlpha Record {} _ = False
+eqAlpha (MkRecord _ (MkRecordFields fs)) (MkRecord _ (MkRecordFields fs')) =
+  and $
+    alignWith
+      ( \case
+          This {} -> False
+          That {} -> False
+          These l r -> eqAlpha l r
+      )
+      (Map.fromList fs)
+      (Map.fromList fs')
+eqAlpha MkRecord {} _ = False
+eqAlpha (ProjField _ f e) (ProjField _ f' e') =
+  eqAlpha f f' && e == (e' :: Text)
+eqAlpha ProjField {} _ = False
+
 type Type = Value
 
 type Context = HashMap Name (Maybe Value, Type)
@@ -181,7 +252,7 @@ typeCheck i ctx (XExpr (Inf e)) v = do
   v' <- typeInfer i ctx e
   let expect = quote 0 v
       actual = quote 0 v'
-  unless (expect == actual) $
+  unless (v == v') $
     Left $
       "Type mismatch: (expr, expected, actual) = "
         <> show (pprint e, pprint expect, pprint actual)
