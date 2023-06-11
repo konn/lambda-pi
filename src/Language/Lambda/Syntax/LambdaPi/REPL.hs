@@ -31,11 +31,11 @@ import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
 import RIO (Display (display), HasLogFunc, IsString (fromString), MonadIO, MonadReader, MonadThrow (throwM), MonadUnliftIO, NonEmpty, catch, displayShow, logError, logInfo, logWarn)
 import RIO.State (MonadState)
-import Text.Megaparsec (eof, optional, (<|>))
+import Text.Megaparsec (eof, optional, try, (<|>))
 
 data Stmt
   = Eval (Expr Parse)
-  | Let Text (Expr Parse)
+  | LetS Text (Expr Parse)
   | Clear (Maybe Text)
   | Assume (NonEmpty (Text, Expr Parse))
   deriving (Show)
@@ -194,7 +194,7 @@ assumeP =
 
 letP :: Parser Stmt
 letP =
-  Let <$ reserved "let" <*> identifier <* symbol "=" <*> exprP
+  try $ LetS <$ reserved "let" <*> identifier <* symbol "=" <*> exprP
 
 readEvalPrintM ::
   ( MonadThrow m
@@ -231,7 +231,7 @@ runCommand inp (Eval te) =
   case toInferable $ renameExpr te of
     Just e -> evalM inp e
     Nothing -> throwM $ CouldNotInfer $ NE.singleton te
-runCommand _ (Let var te) =
+runCommand _ (LetS var te) =
   case toInferable $ renameExpr te of
     Just e -> letM var e
     Nothing -> throwM $ CouldNotInfer $ NE.singleton te

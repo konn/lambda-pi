@@ -56,6 +56,12 @@ renameExprM = \case
             %~ maybe id (`HM.insert` 0) (maybeName mv) . fmap succ
         )
         (renameExprM body)
+  Let NoExtField v e body ->
+    Let NoExtField (Just v)
+      <$> renameExprM e
+      <*> local
+        (#boundVars %~ HM.insert v 0 . fmap succ)
+        (renameExprM body)
   Nat NoExtField -> pure $ Nat NoExtField
   Zero NoExtField -> pure $ Zero NoExtField
   Succ NoExtField n -> Succ NoExtField <$> renameExprM n

@@ -81,7 +81,7 @@ appSpaceP =
       )
 
 termP :: Parser ParsedExpr
-termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> lamP <|> varP <|> parens exprP
+termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> lamP <|> varP <|> parens exprP
 
 openP :: Parser ParsedExpr
 openP =
@@ -90,6 +90,17 @@ openP =
       <$ reserved "open"
       <*> exprP
       <* between (symbol "{") (symbol "}") (reserved "..")
+      <* reserved "in"
+      <*> exprP
+
+letP :: Parser ParsedExpr
+letP =
+  label "let-expression" $
+    Let NoExtField
+      <$ reserved "let"
+      <*> identifier
+      <* reservedOp "="
+      <*> exprP
       <* reserved "in"
       <*> exprP
 
@@ -299,7 +310,7 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in"]
+keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'

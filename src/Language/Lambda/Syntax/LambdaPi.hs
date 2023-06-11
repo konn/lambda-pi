@@ -48,6 +48,10 @@ module Language.Lambda.Syntax.LambdaPi (
   NoExtCon (),
   noExtCon,
 
+  -- ** Primitives
+  Prim (..),
+  XPrim,
+
   -- ** Field and/or Constructor extension
 
   -- *** Type annotation
@@ -84,6 +88,11 @@ module Language.Lambda.Syntax.LambdaPi (
   PiVarName,
   PiVarType,
   PiRHS,
+
+  -- *** Let-expressions
+  XLet,
+  LetRHS,
+  LetBody,
 
   -- *** Naturals
   XNat,
@@ -173,6 +182,7 @@ data Expr phase
   | App (XApp phase) (AppLHS phase) (AppRHS phase)
   | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
+  | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
   | Nat (XNat phase)
   | Zero (XZero phase)
   | Succ (XSucc phase) (SuccBody phase)
@@ -213,10 +223,26 @@ deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
 
 deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
 
+instance Pretty e Prim where
+  pretty Unit = "Unit"
+  pretty Tt = "tt"
+
+data Prim = Unit | Tt
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (Hashable)
+
+type family XPrim p
+
+type instance XPrim Parse = NoExtField
+
+type instance XPrim Rename = NoExtField
+
+type instance XPrim (Typing _) = NoExtField
+
 instance Pretty e NoExtCon where
   pretty = noExtCon
 
-data Name = Global Text | Local Int | Quote Int
+data Name = Global Text | Local Int | Quote Int | PrimName Prim
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (Hashable)
 
@@ -311,6 +337,7 @@ type instance Id Rename = RnId
 data RnId
   = RnGlobal Text
   | RnBound !Int
+  | RnPrim Prim
   deriving (Show, Eq, Ord, Generic)
 
 type instance Id (Typing m) = FreeVar (Typing m)
@@ -457,6 +484,38 @@ type instance PiRHS Parse = Expr Parse
 type instance PiRHS Rename = Expr Rename
 
 type instance PiRHS (Typing _) = Expr Checkable
+
+type family XLet p
+
+type instance XLet Parse = NoExtField
+
+type instance XLet Rename = NoExtField
+
+type instance XLet (Typing _) = NoExtField
+
+type family LetName p
+
+type instance LetName Parse = Text
+
+type instance LetName Rename = Maybe Text
+
+type instance LetName (Typing _) = Maybe Text
+
+type family LetRHS p
+
+type instance LetRHS Parse = Expr Parse
+
+type instance LetRHS Rename = Expr Rename
+
+type instance LetRHS (Typing _) = Expr Inferable
+
+type family LetBody p
+
+type instance LetBody Parse = Expr Parse
+
+type instance LetBody Rename = Expr Rename
+
+type instance LetBody (Typing e) = Expr (Typing e)
 
 type family XNat p
 
@@ -834,6 +893,7 @@ instance VarLike Name where
             "<<Local: " <> T.pack (show i) <> ">>"
   varName (Global t) = pure $ Just t
   varName q@Quote {} = error $ "Could not occur: " <> show q
+  varName (PrimName p) = pure $ Just $ T.pack $ show $ pprint p
 
 class HasBindeeType v where
   type BindeeType v
@@ -869,6 +929,9 @@ instance
   , HasBindeeType (PiVarType phase)
   , Pretty PrettyEnv (BindeeType (PiVarType phase))
   , Pretty PrettyEnv (PiRHS phase)
+  , VarLike (LetName phase)
+  , Pretty PrettyEnv (LetRHS phase)
+  , Pretty PrettyEnv (LetBody phase)
   , Pretty PrettyEnv (SuccBody phase)
   , Pretty PrettyEnv (NatElimRetFamily phase)
   , Pretty PrettyEnv (NatElimBaseCase phase)
@@ -952,6 +1015,12 @@ instance
             >>> #boundVars %~ (Seq.<|) (var, lvl)
         )
         (pretty body)
+  pretty (Let _ n b e) = do
+    var <- fromMaybe "_" <$> varName n
+    sep
+      [ "let" <+> text var <+> "=" <+> pretty b
+      , "in" <+> pretty e
+      ]
   pretty Nat {} = text "ℕ"
   pretty Zero {} = text "0"
   -- FIXME: compress numerals

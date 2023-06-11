@@ -57,11 +57,14 @@ toInferable = \case
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r -> App NoExtField <$> toInferable l <*> toCheckable r
   Var NoExtField (RnGlobal v) -> pure $ Var NoExtField $ Global v
+  Var NoExtField (RnPrim v) -> pure $ Var NoExtField $ PrimName v
   Var NoExtField (RnBound v) -> pure $ XExpr $ BVar v
   Lam NoExtField v minType body -> do
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
   Pi NoExtField mv srcTy dstTy ->
     Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
+  Let NoExtField v e b ->
+    Let NoExtField v <$> toInferable e <*> toInferable b
   Nat NoExtField -> pure $ Nat NoExtField
   Zero NoExtField -> pure $ Zero NoExtField
   Succ NoExtField x -> Succ NoExtField <$> toCheckable x
@@ -96,6 +99,7 @@ toCheckable = \case
   Star NoExtField -> pure $ inf $ Star NoExtField
   App NoExtField l r -> fmap inf . App NoExtField <$> toInferable l <*> toCheckable r
   Var NoExtField (RnGlobal v) -> pure $ inf $ Var NoExtField $ Global v
+  Var NoExtField (RnPrim v) -> pure $ inf $ Var NoExtField $ PrimName v
   Var NoExtField (RnBound v) -> pure $ inf $ XExpr $ BVar v
   Lam NoExtField mv (Just ty) body ->
     do
@@ -105,6 +109,9 @@ toCheckable = \case
     Lam NoExtField mv Nothing <$> toCheckable body
   Pi NoExtField mv srcTy dstTy ->
     fmap inf . Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
+  Let NoExtField v e b ->
+    Let NoExtField v <$> toInferable e <*> toCheckable b
+      <|> fmap inf . Let NoExtField v <$> toInferable e <*> toInferable b
   Nat NoExtField -> pure $ inf $ Nat NoExtField
   Zero NoExtField -> pure $ inf $ Zero NoExtField
   Succ NoExtField x -> inf . Succ NoExtField <$> toCheckable x
@@ -154,6 +161,7 @@ instance Show Value where
 
 data Neutral
   = NFree Name
+  | NPrim Prim
   | NApp Neutral Value
   | NNatElim Value Value Value Neutral
   | NVecElim Value Value Value Value Value Neutral
@@ -189,6 +197,8 @@ eqAlpha (Lam _ _ _ b) (Lam _ _ _ b') = eqAlpha b b'
 eqAlpha Lam {} _ = False
 eqAlpha (Pi _ _ l r) (Pi _ _ l' r') = eqAlpha l l' && eqAlpha r r'
 eqAlpha Pi {} _ = False
+eqAlpha (Let _ _ e b) (Let _ _ e' b') = eqAlpha e e' && eqAlpha b b'
+eqAlpha Let {} _ = False
 eqAlpha Nat {} Nat {} = True
 eqAlpha Nat {} _ = False
 eqAlpha Zero {} Zero {} = True
@@ -307,6 +317,13 @@ typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
       <> show (pprint $ quote 0 ty)
       <> "', but got a lambda: "
       <> show (pprint lam)
+typeCheck i ctx (Let _ _ e b) ty = do
+  vty <- typeInfer i ctx e
+  typeCheck
+    (i + 1)
+    (HM.insert (Local i) (Nothing, vty) ctx)
+    (subst 0 (Var NoExtField (Local i)) b)
+    ty
 typeCheck i ctx (Open _ r b) ty = do
   recType <- typeInfer i ctx r
   -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
@@ -341,6 +358,7 @@ typeInfer !i ctx (Ann _ e rho) = do
   typeCheck i ctx e t
   pure t
 typeInfer _ _ Star {} = pure VStar
+typeInfer _ _ (Var _ (PrimName p)) = pure $ inferPrim p
 typeInfer _ ctx (Var _ x) = case HM.lookup x ctx of
   Just (_, t) -> pure t
   Nothing -> Left $ "Unknown identifier: " <> show x
@@ -375,6 +393,10 @@ typeInfer i ctx (Pi NoExtField _ rho rho') = do
     (subst 0 (Var NoExtField (Local i)) rho')
     VStar
   pure VStar
+typeInfer i ctx (Let NoExtField _ e b) = do
+  vty <- typeInfer i ctx e
+  typeInfer (i + 1) (HM.insert (Local i) (Nothing, vty) ctx) $
+    subst 0 (Var NoExtField (Local i)) b
 typeInfer _ _ Nat {} = pure VStar
 typeInfer _ _ Zero {} = pure VNat
 typeInfer i ctx (Succ NoExtField k) = VNat <$ typeCheck i ctx k VNat
@@ -459,6 +481,10 @@ typeInfer i ctx (Open _ r b) = do
         "open expression requires a record, but got a term of type: "
           <> show (pprint $ quote 0 otr)
 
+inferPrim :: Prim -> Type
+inferPrim Tt = VNeutral $ NPrim Unit
+inferPrim Unit = VStar
+
 subst :: forall m. KnownTypingMode m => Int -> Expr Inferable -> Expr (Typing m) -> Expr (Typing m)
 subst !i r (Ann c e ty) = Ann c (subst i r e) (subst i r ty)
 subst !_ _ (Star c) = Star c
@@ -470,6 +496,8 @@ subst !i r (Lam x mv ann body) =
     SInfer -> Lam x mv (subst i r ann) $ subst (i + 1) r body
 subst !i r (Pi c mv ann body) =
   Pi c mv (subst i r ann) (subst (i + 1) r body)
+subst !i r (Let NoExtField mv e b) =
+  Let NoExtField mv (subst i r e) $ subst (i + 1) r b
 subst _ _ (Nat c) = Nat c
 subst _ _ (Zero c) = Zero c
 subst i r (Succ c n) = Succ c $ subst i r n
@@ -555,6 +583,7 @@ substLocalNeutral i v (NProjField r f) =
   case substLocalNeutral i v r of
     Right rec -> Right $ evalProjField f rec
     Left n -> Left $ NProjField n f
+substLocalNeutral _ _ (NPrim p) = Left $ NPrim p
 
 quote :: Int -> Value -> Expr Checkable
 quote i (VLam mv f) = Lam NoExtField mv Nothing $ quote (i + 1) $ f $ vfree $ Quote i
@@ -603,6 +632,7 @@ quoteNeutral i (NVecElim a m mz ms k xs) =
       quoteNeutral i xs
 quoteNeutral i (NProjField r f) =
   ProjField NoExtField (quoteNeutral i r) f
+quoteNeutral _ (NPrim v) = Var NoExtField $ PrimName v
 
 boundFree :: Int -> Name -> Expr Inferable
 boundFree i (Quote k) = XExpr $ BVar $ i - k - 1
@@ -613,6 +643,7 @@ eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var _ fv) =
   case fv of
+    PrimName p -> VNeutral $ NPrim p
     Global g | Just v <- ctx ^. #namedBinds . at g -> v
     _ -> vfree fv
 eval ctx (XExpr (BVar n)) = ctx ^?! #localBinds . ix n
@@ -623,6 +654,10 @@ eval ctx (Lam _ mv _ e) = VLam mv $ \x ->
     e
 eval ctx (Pi _ mv t t') =
   VPi mv (eval ctx t) $ \x -> eval (ctx & #localBinds %~ (x <|)) t'
+eval ctx (Let _ _ e b) =
+  eval
+    (ctx & #localBinds %~ (eval ctx e <|))
+    b
 eval _ Nat {} = VNat
 eval _ Zero {} = VZero
 eval ctx (Succ _ k) = VSucc $ eval ctx k
