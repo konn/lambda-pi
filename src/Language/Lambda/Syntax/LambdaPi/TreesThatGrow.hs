@@ -1,12 +1,17 @@
+{-# LANGUAGE GHC2021 #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -125,16 +130,32 @@ module Language.Lambda.Syntax.LambdaPi.TreesThatGrow (
   -- **** Eliminators
   XProjField,
   ProjFieldRecord,
-  RecordFieldSelector,
+
+  -- * Pretty-printing
+  VarLike (..),
+  DocM (..),
+  HasBindeeType (..),
 ) where
 
-import Control.Lens.Plated
+import Control.Arrow ((>>>))
+import Control.Lens
+import Control.Monad (forM_)
+import Control.Monad.Reader.Class
+import Data.Generics.Labels ()
+import Data.HashMap.Strict (HashMap)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
+import Data.Maybe
+import Data.Sequence (Seq)
+import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import GHC.Generics (Generic, Rep)
 import GHC.Generics.Constraint
 import RIO (NFData)
+import Text.PrettyPrint.Monadic
+
+instance Pretty e NoExtCon where
+  pretty = noExtCon
 
 data Name = Global Text | Local Int | Quote Int
   deriving (Show, Eq, Ord, Generic)
@@ -645,14 +666,6 @@ type instance ProjFieldRecord Rename = Expr Rename
 
 type instance ProjFieldRecord (Typing _) = Expr Inferable
 
-type family RecordFieldSelector p
-
-type instance RecordFieldSelector Parse = Text
-
-type instance RecordFieldSelector Rename = Text
-
-type instance RecordFieldSelector (Typing p) = Text
-
 type family XMkRecord p
 
 type instance XMkRecord Parse = NoExtField
@@ -730,7 +743,7 @@ data Expr phase
       (VecElimInput phase)
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
-  | ProjField (XProjField phase) (ProjFieldRecord phase) (RecordFieldSelector phase)
+  | ProjField (XProjField phase) (ProjFieldRecord phase) Text
   | XExpr (XExpr phase)
   deriving (Generic)
 
@@ -745,3 +758,175 @@ deriving instance FieldC Eq (Expr phase) => Eq (Expr phase)
 deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
 
 deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
+
+data PrettyEnv = PrettyEnv
+  { levels :: !(HashMap Text Int)
+  , boundVars :: !(Seq Text)
+  }
+  deriving (Show, Eq, Ord, Generic)
+
+class VarLike v where
+  varName :: MonadReader PrettyEnv m => v -> m (Maybe Text)
+
+class HasBindeeType p v where
+  bindeeType :: v -> Maybe (Expr p)
+
+instance
+  ( Pretty PrettyEnv (AnnLHS phase)
+  , Pretty PrettyEnv (AnnRHS phase)
+  , VarLike (Id phase)
+  , Pretty PrettyEnv (AppLHS phase)
+  , Pretty PrettyEnv (AppRHS phase)
+  , HasBindeeType phase (LamBindType phase)
+  , VarLike (LamBindName phase)
+  , Pretty PrettyEnv (LamBody phase)
+  , HasBindeeType phase (PiVarType phase)
+  , VarLike (PiVarName phase)
+  , Pretty PrettyEnv (PiRHS phase)
+  , Pretty PrettyEnv (SuccBody phase)
+  , Pretty PrettyEnv (NatElimRetFamily phase)
+  , Pretty PrettyEnv (NatElimBaseCase phase)
+  , Pretty PrettyEnv (NatElimInductionStep phase)
+  , Pretty PrettyEnv (NatElimInput phase)
+  , Pretty PrettyEnv (VecType phase)
+  , Pretty PrettyEnv (VecLength phase)
+  , Pretty PrettyEnv (NilType phase)
+  , Pretty PrettyEnv (ConsType phase)
+  , Pretty PrettyEnv (ConsLength phase)
+  , Pretty PrettyEnv (ConsHead phase)
+  , Pretty PrettyEnv (ConsTail phase)
+  , Pretty PrettyEnv (VecElimEltType phase)
+  , Pretty PrettyEnv (VecElimRetFamily phase)
+  , Pretty PrettyEnv (VecElimBaseCase phase)
+  , Pretty PrettyEnv (VecElimInductiveStep phase)
+  , Pretty PrettyEnv (VecElimLength phase)
+  , Pretty PrettyEnv (VecElimInput phase)
+  , Pretty PrettyEnv (RecordFieldType phase)
+  , Pretty PrettyEnv (RecordField phase)
+  , Pretty PrettyEnv (ProjFieldRecord phase)
+  , Pretty PrettyEnv (XExpr phase)
+  ) =>
+  Pretty PrettyEnv (Expr phase)
+  where
+  pretty (Ann _ l r) =
+    withPrecParens 10 $
+      withPrecedence 11 (pretty l) <+> colon <+> pretty r
+  pretty Star {} = char '★'
+  pretty (Var _ v) = text . fromMaybe "x" =<< varName v
+  pretty (App _ l r) =
+    withPrecParens 11 $
+      pretty l <+> withPrecedence 12 (pretty r)
+  pretty (Lam _ mv mp body) = withPrecParens 4 $ do
+    let mArgTy = bindeeType @phase mp
+    var <- fromMaybe "x" <$> varName mv
+    hang
+      ( char 'λ'
+          <+> appWhen
+            (isJust mArgTy)
+            parens
+            ( text var <+> forM_ mArgTy \ty ->
+                colon <+> pretty ty
+            )
+          <+> char '.'
+      )
+      2
+      $ local
+        ( #levels . at var %~ Just . maybe 1 (+ 1)
+            >>> #boundVars %~ (Seq.<|) var
+        )
+        (pretty body)
+  pretty (Pi _ mv mp body) = withPrecParens 4 $ do
+    -- TODO: check occurrence of mv in body and
+    -- use arrows if absent!
+    let mArgTy = bindeeType @phase mp
+    var <- fromMaybe "x" <$> varName mv
+    hang
+      ( char 'Π'
+          <+> appWhen
+            (isJust mArgTy)
+            parens
+            ( text var <+> forM_ mArgTy \ty ->
+                colon <+> pretty ty
+            )
+          <+> char '.'
+      )
+      2
+      $ local
+        ( #levels . at var %~ Just . maybe 1 (+ 1)
+            >>> #boundVars %~ (Seq.<|) var
+        )
+        (pretty body)
+  pretty Nat {} = text "ℕ"
+  pretty Zero {} = text "0"
+  -- FIXME: compress numerals
+  pretty (Succ _ e) = withPrecParens 11 $ text "succ" <+> pretty e
+  pretty (NatElim _ t b i n) =
+    withPrecParens 11 $
+      text "natElim" <+> pretty t <+> pretty b <+> pretty i <+> pretty n
+  pretty (Vec _ a n) =
+    withPrecParens 11 $
+      text "Vec" <+> pretty a <+> pretty n
+  pretty (Nil _ a) =
+    withPrecParens 11 $ text "nil" <+> pretty a
+  pretty (Cons _ a n x xs) =
+    withPrecParens 11 $
+      text "cons"
+        <+> pretty a
+        <+> pretty n
+        <+> pretty x
+        <+> pretty xs
+  pretty (VecElim _ a t b i n xs) =
+    withPrecParens 11 $
+      text "vecElim" <+> pretty a <+> pretty t <+> pretty b <+> pretty i <+> pretty n <+> pretty xs
+  pretty (Record _ (RecordFieldTypes flds)) =
+    braces $
+      sep $
+        punctuate
+          comma
+          [ text f <+> colon <+> pretty e
+          | (f, e) <- flds
+          ]
+  pretty (MkRecord _ (MkRecordFields flds)) =
+    braces $
+      sep $
+        punctuate
+          comma
+          [ text f <+> equals <+> pretty e
+          | (f, e) <- flds
+          ]
+  pretty (ProjField _ e fld) =
+    withPrecParens 12 (pretty e <> "#" <> text fld)
+  pretty (XExpr e) = pretty e
+
+{-
+occurs :: Int -> Expr (Typing m) -> Bool
+occurs i (XExpr (Inf te')) = occurs i te'
+occurs i (Lam _ _ _ te') = occurs (i + 1) te'
+occurs i (MkRecord _ flds) = any (occurs i . snd) flds
+occurs i (Ann _ te' te2) = occurs i te' || occurs i te2
+occurs _ Star {} = False
+occurs i (Pi _ _ te' te2) =
+  occurs i te' || occurs (i + 1) te2
+occurs i (NatElim _ te' te2 te3 te4) =
+  occurs i te' || occurs i te2 || occurs i te3 || occurs i te4
+occurs i (Bound n)
+  | i == n = True
+  | otherwise = False
+occurs _ Free {} = False
+occurs i (App _ te' te2) = occurs i te' || occurs i te2
+occurs _ Nat {} = False
+occurs _ Zero {} = False
+occurs i (Succ _ te') = occurs i te'
+occurs i (Vec _ te' te2) = occurs i te' || occurs i te2
+occurs i (Nil _ te') = occurs i te'
+occurs i (Cons _ te' te2 te3 te4) = occurs i te' || occurs i te2 || occurs i te3 || occurs i te4
+occurs i (VecElim _ te' te2 te3 te4 te5 te6) =
+  occurs i te'
+    || occurs i te2
+    || occurs i te3
+    || occurs i te4
+    || occurs i te5
+    || occurs i te6
+occurs i (Record _ (RecordFieldTypes flds)) = any (occurs i . snd) flds
+occurs i (ProjField _ e _) = occurs i e
+ -}

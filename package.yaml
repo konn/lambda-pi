@@ -42,6 +42,7 @@ dependencies:
 - haskeline
 - lens
 - megaparsec
+- mmorph
 - monad-loops
 - mtl
 - parser-combinators

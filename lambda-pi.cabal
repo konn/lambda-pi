@@ -37,6 +37,7 @@ library
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Parser
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Rename
       Language.Lambda.Syntax.LambdaPi.TreesThatGrow.Typing
+      Text.PrettyPrint.Monadic
   other-modules:
       Paths_lambda_pi
   hs-source-dirs:
@@ -64,6 +65,7 @@ library
     , haskeline
     , lens
     , megaparsec
+    , mmorph
     , monad-loops
     , mtl
     , parser-combinators
@@ -114,6 +116,7 @@ executable lambda-pi-exe
     , lambda-pi
     , lens
     , megaparsec
+    , mmorph
     , monad-loops
     , mtl
     , parser-combinators
@@ -169,6 +172,7 @@ test-suite lambda-pi-test
     , lambda-pi
     , lens
     , megaparsec
+    , mmorph
     , monad-loops
     , mtl
     , parser-combinators
