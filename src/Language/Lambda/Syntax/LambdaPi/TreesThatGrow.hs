@@ -873,14 +873,15 @@ instance
           | lvl > 0 = text var <> "_" <> pretty lvl
           | otherwise = text var
     hang
-      ( char 'λ'
-          <+> appWhen
-            (isJust mArgTy)
-            parens
-            ( varN <+> forM_ mArgTy \ty ->
-                colon <+> pretty ty
-            )
-          <+> char '.'
+      ( ( char 'λ'
+            <+> appWhen
+              (isJust mArgTy)
+              parens
+              ( varN <+> forM_ mArgTy \ty ->
+                  colon <+> pretty ty
+              )
+        )
+          <> char '.'
       )
       2
       $ local
@@ -898,14 +899,15 @@ instance
           | lvl > 0 = text var <> "_" <> pretty lvl
           | otherwise = text var
     hang
-      ( char 'Π'
-          <+> appWhen
-            (isJust mArgTy)
-            parens
-            ( varN <+> forM_ mArgTy \ty ->
-                colon <+> pretty ty
-            )
-          <+> char '.'
+      ( ( char 'Π'
+            <+> appWhen
+              (isJust mArgTy)
+              parens
+              ( varN <+> forM_ mArgTy \ty ->
+                  colon <+> pretty ty
+              )
+        )
+          <> char '.'
       )
       2
       $ local
