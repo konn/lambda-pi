@@ -964,7 +964,7 @@ instance Pretty PrettyEnv (XExprTyping m) where
     case mtn of
       Just (t, n)
         | n > 0 -> text t <> char '_' <> int n
-        | otherwise -> text t <> int n
+        | otherwise -> text t
       Nothing -> "<<Global:" <> pretty i <> ">>"
   pretty (Inf e) = pretty e
 
