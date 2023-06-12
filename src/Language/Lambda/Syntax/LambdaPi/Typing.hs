@@ -216,7 +216,7 @@ data Neutral
 data NeutralChk
   = NCase Neutral (HM.HashMap Text (Value -> Value))
   | NInf Neutral
-  -- FIXME: Work out what NOpen and NCase should be
+  -- FIXME: Work out what NOpen should be
   deriving (Generic)
 
 vfree :: Name -> Value
