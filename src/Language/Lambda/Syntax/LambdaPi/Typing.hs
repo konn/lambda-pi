@@ -211,10 +211,12 @@ data Neutral
   | NNatElim Value Value Value Neutral
   | NVecElim Value Value Value Value Value Neutral
   | NProjField Neutral Text
-  -- FIXME: Work out what NOpen and NCase should be
   deriving (Generic)
 
-data NeutralChk = NCase Neutral (HM.HashMap Text (Value -> Value))
+data NeutralChk
+  = NCase Neutral (HM.HashMap Text (Value -> Value))
+  | NInf Neutral
+  -- FIXME: Work out what NOpen and NCase should be
   deriving (Generic)
 
 vfree :: Name -> Value
@@ -690,6 +692,7 @@ substLocalNeutral i v (NProjField r f) =
 substLocalNeutral _ _ (NPrim p) = Left $ NPrim p
 
 substLocalNeutralChk :: Int -> Value -> NeutralChk -> Either NeutralChk Value
+substLocalNeutralChk i v (NInf ninf) = Bi.first NInf $ substLocalNeutral i v ninf
 substLocalNeutralChk i v (NCase e valts) =
   case substLocalNeutral i v e of
     Left e' -> Left $ NCase e' $ fmap (substLocal i v .) valts
@@ -752,6 +755,7 @@ quoteNeutral i (NProjField r f) =
 quoteNeutral _ (NPrim v) = Var NoExtField $ PrimName v
 
 quoteNeutralChk :: Int -> NeutralChk -> Expr Checkable
+quoteNeutralChk i (NInf n) = inf $ quoteNeutral i n
 quoteNeutralChk i (NCase v alts) =
   Case NoExtField (quoteNeutral i v) $
     CaseAlts $
