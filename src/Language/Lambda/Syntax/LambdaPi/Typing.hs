@@ -210,6 +210,7 @@ data Neutral
   | NNatElim Value Value Value Neutral
   | NVecElim Value Value Value Value Value Neutral
   | NProjField Neutral Text
+  -- FIXME: Work out what NOpen and NCase should be
   deriving (Generic)
 
 vfree :: Name -> Value
@@ -785,6 +786,7 @@ eval ctx (Open _ rcd bdy) =
       let ctx' = ctx & #namedBinds %~ (flds <>)
        in eval ctx' bdy
     otr ->
+      -- FIXME: Work out what NOpen should be
       error $
         "Impossible: open requires a record, but got a term of type: "
           <> show (pprint $ quote 0 otr)
@@ -802,6 +804,7 @@ eval ctx (Case _ e (CaseAlts alts)) =
               <> show (map fst alts)
         Just (CaseAlt _ _ b) ->
           eval (ctx & #localBinds %~ (v <|)) b
+    -- FIXME: Work out what NCase should be
     v -> error $ "Impossible: case-expression with non-inj input: " <> show (pprint v)
 eval ctx (XExpr (Inf e)) = eval ctx e
 
