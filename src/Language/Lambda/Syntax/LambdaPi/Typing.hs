@@ -856,6 +856,7 @@ evalCase v0 alts = case v0 of
             <> show (HM.keys alts)
       Just f -> f v
   VNeutral v -> VNeutralChk $ NCase v alts
+  VNeutralChk (NInf v) -> VNeutralChk $ NCase v alts
   v -> error $ "Impossible: neither inj or neutral term given as a scrutinee of case-expression: " <> show (pprint v)
 
 evalNatElim :: Value -> Value -> Value -> Value -> Value
