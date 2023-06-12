@@ -50,7 +50,7 @@ renameExprM = \case
   Lam NoExtField v mtyp body ->
     Lam NoExtField (AlphaName v)
       <$> mapM renameExprM mtyp
-      <*> local (#boundVars %~ HM.insert v 0 . fmap succ) (renameExprM body)
+      <*> abstract v (renameExprM body)
   Pi NoExtField mv typ body ->
     Pi NoExtField (maybe Anonymous AlphaName $ maybeName mv)
       <$> renameExprM typ
@@ -62,9 +62,7 @@ renameExprM = \case
   Let NoExtField v e body ->
     Let NoExtField (AlphaName v)
       <$> renameExprM e
-      <*> local
-        (#boundVars %~ HM.insert v 0 . fmap succ)
-        (renameExprM body)
+      <*> abstract v (renameExprM body)
   Nat NoExtField -> pure $ Nat NoExtField
   Zero NoExtField -> pure $ Zero NoExtField
   Succ NoExtField n -> Succ NoExtField <$> renameExprM n
@@ -105,4 +103,15 @@ renameExprM = \case
     Variant NoExtField . VariantTags <$> mapM (mapM renameExprM) vs
   Inj NoExtField tag p ->
     Inj NoExtField tag <$> renameExprM p
+  Case NoExtField e (CaseAlts alts) ->
+    Case NoExtField
+      <$> renameExprM e
+      <*> (CaseAlts <$> mapM (mapM renameAlt) alts)
   XExpr x -> noExtCon x
+
+renameAlt :: CaseAlt Parse -> Renamer (CaseAlt Rename)
+renameAlt (CaseAlt NoExtField v body) =
+  CaseAlt NoExtField (AlphaName v) <$> renameExprM body
+
+abstract :: Text -> Renamer a -> Renamer a
+abstract v = local $ #boundVars %~ HM.insert v 0 . fmap succ

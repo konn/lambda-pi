@@ -158,23 +158,36 @@ module Language.Lambda.Syntax.LambdaPi (
   XInj,
   InjArg,
 
+  -- **** Eliminator
+  XCase,
+  CaseArg,
+  CaseAlts (..),
+  CaseAlt (..),
+  XCaseAlt,
+  CaseAltVarName,
+  CaseAltBody,
+
   -- * Pretty-printing
   pprint,
   VarLike (..),
   DocM (..),
   HasBindeeType (..),
   AlphaName (..),
+  instantiate,
 ) where
 
 import Control.Arrow ((>>>))
 import Control.Lens
 import Control.Monad (forM_)
 import Control.Monad.Reader.Class
+import Data.Function (on)
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
+import Data.Map.Strict qualified as Map
 import Data.Maybe
+import Data.Ord (comparing)
 import Data.Semigroup.Generic
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
@@ -225,6 +238,7 @@ data Expr phase
     Open (XOpen phase) (OpenRecord phase) (OpenBody phase)
   | Variant (XVariant phase) (VariantTags phase)
   | Inj (XInj phase) Text (InjArg phase)
+  | Case (XCase phase) (CaseArg phase) (CaseAlts phase)
   | XExpr (XExpr phase)
   deriving (Generic)
 
@@ -807,11 +821,11 @@ newtype RecordFieldTypes p = RecordFieldTypes {recFieldTypes :: [(Text, RecordFi
 deriving instance
   Show (RecordFieldType p) => Show (RecordFieldTypes p)
 
-deriving instance
-  Eq (RecordFieldType p) => Eq (RecordFieldTypes p)
+instance Eq (RecordFieldType p) => Eq (RecordFieldTypes p) where
+  (==) = (==) `on` Map.fromList . recFieldTypes
 
-deriving instance
-  Ord (RecordFieldType p) => Ord (RecordFieldTypes p)
+instance Ord (RecordFieldType p) => Ord (RecordFieldTypes p) where
+  compare = comparing $ Map.fromList . recFieldTypes
 
 type family XProjField p
 
@@ -852,9 +866,11 @@ newtype MkRecordFields p = MkRecordFields {mkRecFields :: [(Text, RecordField p)
 
 deriving instance Show (RecordField p) => Show (MkRecordFields p)
 
-deriving instance Eq (RecordField p) => Eq (MkRecordFields p)
+instance Eq (RecordField p) => Eq (MkRecordFields p) where
+  (==) = (==) `on` Map.fromList . mkRecFields
 
-deriving instance Ord (RecordField p) => Ord (MkRecordFields p)
+instance Ord (RecordField p) => Ord (MkRecordFields p) where
+  compare = comparing $ Map.fromList . mkRecFields
 
 deriving anyclass instance NFData (RecordField p) => NFData (MkRecordFields p)
 
@@ -899,9 +915,11 @@ newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantArgType p)]}
 
 deriving instance Show (VariantArgType p) => Show (VariantTags p)
 
-deriving instance Eq (VariantArgType p) => Eq (VariantTags p)
+instance Eq (VariantArgType p) => Eq (VariantTags p) where
+  (==) = (==) `on` Map.fromList . variantTags
 
-deriving instance Ord (VariantArgType p) => Ord (VariantTags p)
+instance Ord (VariantArgType p) => Ord (VariantTags p) where
+  compare = comparing $ Map.fromList . variantTags
 
 type family VariantArgType p
 
@@ -928,6 +946,72 @@ type instance InjArg Parse = Expr Parse
 type instance InjArg Rename = Expr Rename
 
 type instance InjArg (Typing e) = Expr (Typing e)
+
+type family XCase p
+
+type instance XCase Parse = NoExtField
+
+type instance XCase Rename = NoExtField
+
+type instance XCase (Typing _) = NoExtField
+
+type family CaseArg p
+
+type instance CaseArg Parse = Expr Parse
+
+type instance CaseArg Rename = Expr Rename
+
+type instance CaseArg (Typing _) = Expr Inferable
+
+type family XCaseAlt p
+
+type instance XCaseAlt Parse = NoExtField
+
+type instance XCaseAlt Rename = NoExtField
+
+type instance XCaseAlt (Typing m) = NoExtField
+
+type family CaseAltVarName p
+
+type instance CaseAltVarName Parse = Text
+
+type instance CaseAltVarName Rename = AlphaName
+
+type instance CaseAltVarName (Typing _) = AlphaName
+
+type family CaseAltBody p
+
+type instance CaseAltBody Parse = Expr Parse
+
+type instance CaseAltBody Rename = Expr Rename
+
+type instance CaseAltBody (Typing m) = Expr (Typing m)
+
+data CaseAlt p = CaseAlt
+  { xCaseAlt :: XCaseAlt p
+  , altName :: CaseAltVarName p
+  , altBody :: CaseAltBody p
+  }
+  deriving (Generic)
+
+deriving instance FieldC Show (CaseAlt p) => Show (CaseAlt p)
+
+deriving instance FieldC Eq (CaseAlt p) => Eq (CaseAlt p)
+
+deriving instance FieldC Ord (CaseAlt p) => Ord (CaseAlt p)
+
+deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlt p)
+
+newtype CaseAlts p = CaseAlts {getCaseAlts :: [(Text, CaseAlt p)]}
+  deriving (Generic)
+
+deriving instance FieldC Show (CaseAlt p) => Show (CaseAlts p)
+
+deriving instance FieldC Eq (CaseAlt p) => Eq (CaseAlts p)
+
+deriving instance FieldC Ord (CaseAlt p) => Ord (CaseAlts p)
+
+deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlts p)
 
 type family XExpr p
 
@@ -1044,6 +1128,9 @@ instance
   , Pretty PrettyEnv (OpenBody phase)
   , Pretty PrettyEnv (VariantArgType phase)
   , Pretty PrettyEnv (InjArg phase)
+  , Pretty PrettyEnv (CaseArg phase)
+  , VarLike (CaseAltVarName phase)
+  , Pretty PrettyEnv (CaseAltBody phase)
   , Pretty PrettyEnv (XExpr phase)
   ) =>
   Pretty PrettyEnv (Expr phase)
@@ -1059,25 +1146,21 @@ instance
     var <- fromMaybe "x" <$> varName mv
     lvl <- views (#levels . at var) (fromMaybe 0)
     let varN
-          | lvl > 0 = text var <> "_" <> pretty lvl
-          | otherwise = text var
+          | lvl > 0 = var <> "_" <> tshow lvl
+          | otherwise = var
     hang
       ( ( char 'λ'
             <+> appWhen
               (isJust mArgTy)
               parens
-              ( varN <+> forM_ mArgTy \ty ->
+              ( text varN <+> forM_ mArgTy \ty ->
                   colon <+> pretty ty
               )
         )
           <> char '.'
       )
       2
-      $ local
-        ( #levels . at var ?~ (lvl + 1)
-            >>> #boundVars %~ (Seq.<|) (var, lvl)
-        )
-        (pretty body)
+      $ instantiate var (pretty body)
   pretty (Pi _ mv mp body) = withPrecParens 4 $ do
     -- TODO: check occurrence of mv in body and
     -- use arrows if absent!
@@ -1085,30 +1168,30 @@ instance
     var <- fromMaybe "x" <$> varName mv
     lvl <- views (#levels . at var) (fromMaybe 0)
     let varN
-          | lvl > 0 = text var <> "_" <> pretty lvl
-          | otherwise = text var
+          | lvl > 0 = var <> "_" <> T.pack (show lvl)
+          | otherwise = var
     hang
       ( ( char 'Π'
             <+> appWhen
               (isJust mArgTy)
               parens
-              ( varN <+> forM_ mArgTy \ty ->
+              ( text varN <+> forM_ mArgTy \ty ->
                   colon <+> pretty ty
               )
         )
           <> char '.'
       )
       2
-      $ local
-        ( #levels . at var ?~ lvl + 1
-            >>> #boundVars %~ (Seq.<|) (var, lvl)
-        )
-        (pretty body)
+      $ instantiate var (pretty body)
   pretty (Let _ n b e) = do
-    var <- fromMaybe "_" <$> varName n
+    var <- fromMaybe "x" <$> varName n
+    lvl <- views (#levels . at var) (fromMaybe 0)
+    let varN
+          | lvl > 0 = var <> "_" <> tshow lvl
+          | otherwise = var
     sep
-      [ "let" <+> text var <+> "=" <+> pretty b
-      , "in" <+> pretty e
+      [ "let" <+> text varN <+> "=" <+> pretty b
+      , "in" <+> instantiate var (pretty e)
       ]
   pretty Nat {} = text "ℕ"
   pretty Zero {} = text "0"
@@ -1163,7 +1246,36 @@ instance
       <> "|)"
   pretty (Inj _ tag b) =
     "(|" <+> text tag <+> equals <+> pretty b <+> "|)"
+  pretty (Case _ e (CaseAlts alts)) =
+    sep
+      [ "case" <+> pretty e <+> "of"
+      , braces $
+          sep $
+            punctuate
+              semi
+              [ do
+                var <- fromMaybe "x" <$> varName v
+                nest 2 $
+                  text tag
+                    <+> text var
+                    <+> "→"
+                    <+> instantiate var (pretty a)
+              | (tag, CaseAlt _ v a) <- alts
+              ]
+      ]
   pretty (XExpr e) = pretty e
+
+tshow :: Show a => a -> Text
+tshow = T.pack . show
+
+instantiate :: Text -> DocM PrettyEnv () -> DocM PrettyEnv ()
+instantiate var act = do
+  lvl <- views (#levels . at var) (fromMaybe 0)
+  local
+    ( #levels . at var ?~ (lvl + 1)
+        >>> #boundVars %~ (Seq.<|) (var, lvl)
+    )
+    act
 
 instance Pretty PrettyEnv (XExprTyping m) where
   pretty (BVar i) = do

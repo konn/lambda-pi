@@ -322,7 +322,7 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let"]
+keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let", "case", "of"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'

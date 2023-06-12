@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Language.Lambda.Syntax.LambdaPi.Typing (
   -- * Conversion from Renamed AST
@@ -39,15 +40,19 @@ import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
 import Data.List
 import Data.List.NonEmpty (NonEmpty)
+import Data.Map qualified as Map
 import Data.Maybe
+import Data.Ord (comparing)
 import Data.Semialign.Indexed
 import Data.Semigroup.Generic
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.These (These (..))
+import Data.Tuple (swap)
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
+import Text.PrettyPrint.Monadic (Pretty (..))
 
 toInferable :: Expr Rename -> Maybe (Expr Inferable)
 toInferable = \case
@@ -90,6 +95,16 @@ toInferable = \case
     Variant NoExtField . VariantTags
       <$> mapM (mapM toCheckable) fs
   Inj {} -> Nothing
+  Case NoExtField e (CaseAlts alts) ->
+    Case NoExtField
+      <$> toInferable e
+      <*> ( CaseAlts
+              <$> mapM
+                ( mapM $ \(CaseAlt NoExtField mv bdy) ->
+                    CaseAlt NoExtField mv <$> toInferable bdy
+                )
+                alts
+          )
   XExpr x -> noExtCon x
 
 inf :: Expr Inferable -> Expr Checkable
@@ -144,6 +159,25 @@ toCheckable = \case
     inf . Variant NoExtField . VariantTags
       <$> mapM (mapM toCheckable) fs
   Inj NoExtField tag a -> Inj NoExtField tag <$> toCheckable a
+  Case NoExtField e (CaseAlts alts) ->
+    Case NoExtField
+      <$> toInferable e
+      <*> ( CaseAlts
+              <$> mapM
+                ( mapM $ \(CaseAlt NoExtField mv bdy) ->
+                    CaseAlt NoExtField mv <$> toCheckable bdy
+                )
+                alts
+          )
+      <|> fmap inf . Case NoExtField
+        <$> toInferable e
+        <*> ( CaseAlts
+                <$> mapM
+                  ( mapM $ \(CaseAlt NoExtField mv bdy) ->
+                      CaseAlt NoExtField mv <$> toInferable bdy
+                  )
+                  alts
+            )
   XExpr x -> noExtCon x
 
 data Value
@@ -166,6 +200,9 @@ data Value
 instance Show Value where
   show = show . pprint . quote 0
 
+instance Pretty e (Expr Checkable) => Pretty e Value where
+  pretty = pretty . quote 0
+
 data Neutral
   = NFree Name
   | NPrim Prim
@@ -187,6 +224,9 @@ data Env = Env
 
 instance Eq Value where
   (==) = (==) `on` quote 0
+
+instance Ord Value where
+  compare = comparing $ quote 0
 
 type Type = Value
 
@@ -289,6 +329,43 @@ typeCheck _ _ inj@Inj {} ty =
       <> show (pprint (quote 0 ty))
       <> "', but got a variant: "
       <> show (pprint inj)
+typeCheck i ctx (Case _ e (CaseAlts alts)) ty = do
+  eTy <- typeInfer i ctx e
+  case eTy ^? #_VVariant of
+    Nothing ->
+      Left $
+        "A variant is expected in a case-expression, but a term of type: "
+          <> show (pprint (quote 0 eTy))
+    Just tagTys ->
+      Bi.first (("Checking case-expression failed: " <>) . unlines . DLNE.toList) $
+        validationToEither $
+          sequenceA_ $
+            ialignWith
+              ( \tag -> \case
+                  This {} ->
+                    -- TODO: should we allow this and just warn about redundancy?
+                    Failure $ DLNE.singleton $ "Alternative for tag `" <> T.unpack tag <> "' is specified, but the given variant doesn't have that tag: " <> show (pprint eTy)
+                  That {} ->
+                    Failure $ DLNE.singleton $ "Variant has a tag `" <> T.unpack tag <> "', but no alternative is given"
+                  These (CaseAlt _ _ bdy) tty ->
+                    Bi.first
+                      ( DLNE.singleton
+                          . ( ( "Type error during checking clause for `"
+                                  <> T.unpack tag
+                                  <> "': "
+                              )
+                                <>
+                            )
+                      )
+                      $ eitherToValidation
+                      $ typeCheck
+                        (i + 1)
+                        (HM.insert (Local i) (Nothing, tty) ctx)
+                        (subst 0 (Var NoExtField (Local i)) bdy)
+                        ty
+              )
+              (HM.fromList alts)
+              tagTys
 typeCheck _ _ (Ann c _ _) _ = noExtCon c
 typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c
@@ -437,6 +514,54 @@ typeInfer i ctx (Open _ r b) = do
 typeInfer i ctx (Variant NoExtField (VariantTags fs)) = do
   VStar
     <$ traverse_ (flip (typeCheck i ctx) VStar . snd) fs
+typeInfer i ctx (Case NoExtField e (CaseAlts alts)) = do
+  eTy <- typeInfer i ctx e
+  case eTy ^? #_VVariant of
+    Nothing ->
+      Left $
+        "A variant is expected in a case-expression, but a term of type: "
+          <> show (pprint (quote 0 eTy))
+    Just tagTys -> do
+      altTys <-
+        Bi.first (("Checking case-expression failed: " <>) . unlines . DLNE.toList) $
+          validationToEither $
+            sequenceA $
+              ialignWith
+                ( \tag -> \case
+                    This {} ->
+                      -- TODO: should we allow this and just warn about redundancy?
+                      Failure $ DLNE.singleton $ "Alternative for tag `" <> T.unpack tag <> "' is specified, but the given variant doesn't have that tag: " <> show (pprint eTy)
+                    That {} ->
+                      Failure $ DLNE.singleton $ "Variant has a tag `" <> T.unpack tag <> "', but no alternative is given"
+                    These (CaseAlt _ _ bdy) tty ->
+                      Bi.first
+                        ( DLNE.singleton
+                            . ( ( "Type error during checking clause for `"
+                                    <> T.unpack tag
+                                    <> "': "
+                                )
+                                  <>
+                              )
+                        )
+                        $ eitherToValidation
+                        $ typeInfer
+                          (i + 1)
+                          (HM.insert (Local i) (Nothing, tty) ctx)
+                          (subst 0 (Var NoExtField (Local i)) bdy)
+                )
+                (HM.fromList alts)
+                tagTys
+      let tyMaps =
+            Map.fromListWith (<>) $
+              map (Bi.second DLNE.singleton . swap) $
+                HM.toList altTys
+      case Map.keys tyMaps of
+        [] -> Left "Empty alternative!"
+        [ty] -> pure ty
+        _ ->
+          Left $
+            "Type mismatch: distinct returned types: "
+              <> show (Map.toList tyMaps)
 typeInfer _ _ (Inj c _ _) = noExtCon c
 
 inferPrim :: Prim -> Type
@@ -483,6 +608,16 @@ subst !i r bd@(XExpr (BVar j))
 subst !i r (XExpr (Inf e)) = XExpr $ Inf $ subst i r e
 subst i r (Variant c (VariantTags flds)) =
   Variant c $ VariantTags $ map (fmap (subst i r)) flds
+subst i r (Case c e (CaseAlts alts)) =
+  Case
+    c
+    (subst i r e)
+    $ CaseAlts
+    $ map
+      ( fmap $ \(CaseAlt d mv b) ->
+          CaseAlt d mv $ subst (i + 1) r b
+      )
+      alts
 subst i r (Inj c l e) = Inj c l $ subst i r e
 
 fromInferable :: forall m. KnownTypingMode m => Expr Inferable -> Expr (Typing m)
@@ -655,6 +790,19 @@ eval ctx (Open _ rcd bdy) =
           <> show (pprint $ quote 0 otr)
 eval ctx (Variant _ flds) = VVariant $ HM.fromList $ map (Bi.second $ eval ctx) $ variantTags flds
 eval ctx (Inj _ t e) = VInj t $ eval ctx e
+eval ctx (Case _ e (CaseAlts alts)) =
+  case eval ctx e of
+    VInj t v ->
+      case HM.lookup t (HM.fromList alts) of
+        Nothing ->
+          error $
+            "Impossible: missing alternative for `"
+              <> T.unpack t
+              <> "' in the given case alternative: "
+              <> show (map fst alts)
+        Just (CaseAlt _ _ b) ->
+          eval (ctx & #localBinds %~ (v <|)) b
+    v -> error $ "Impossible: case-expression with non-inj input: " <> show (pprint v)
 eval ctx (XExpr (Inf e)) = eval ctx e
 
 evalNatElim :: Value -> Value -> Value -> Value -> Value
