@@ -195,6 +195,7 @@ data Value
   | VVariant (HashMap Text Value)
   | VInj Text Value
   | VNeutral Neutral
+  | VNeutralChk NeutralChk
   deriving (Generic)
 
 instance Show Value where
@@ -211,6 +212,9 @@ data Neutral
   | NVecElim Value Value Value Value Value Neutral
   | NProjField Neutral Text
   -- FIXME: Work out what NOpen and NCase should be
+  deriving (Generic)
+
+data NeutralChk = NCase Neutral (HM.HashMap Text (Value -> Value))
   deriving (Generic)
 
 vfree :: Name -> Value
@@ -644,11 +648,12 @@ substLocal i v (VPi mv va f) =
   VPi mv (substLocal i v va) $ substLocal i v . f
 substLocal i v (VNeutral neu) =
   either VNeutral id $ substLocalNeutral i v neu
+substLocal i v (VNeutralChk neu) =
+  either VNeutralChk id $ substLocalNeutralChk i v neu
 substLocal i v (VVec va va') = VVec (substLocal i v va) (substLocal i v va')
 substLocal i v (VNil va) = VNil $ substLocal i v va
 substLocal i v (VCons va va' va2 va3) =
   VCons (substLocal i v va) (substLocal i v va') (substLocal i v va2) (substLocal i v va3)
--- substLocal i v (VVariant vars) = VVariant $ fmap (substLocal i v) vars
 substLocal i v (VRecord flds) = VRecord $ fmap (substLocal i v) flds
 substLocal i v (VMkRecord flds) = VMkRecord $ fmap (substLocal i v) flds
 substLocal i v (VVariant flds) = VVariant $ fmap (substLocal i v) flds
@@ -684,6 +689,12 @@ substLocalNeutral i v (NProjField r f) =
     Left n -> Left $ NProjField n f
 substLocalNeutral _ _ (NPrim p) = Left $ NPrim p
 
+substLocalNeutralChk :: Int -> Value -> NeutralChk -> Either NeutralChk Value
+substLocalNeutralChk i v (NCase e valts) =
+  case substLocalNeutral i v e of
+    Left e' -> Left $ NCase e' $ fmap (substLocal i v .) valts
+    Right e' -> Right $ evalCase e' valts
+
 quote :: Int -> Value -> Expr Checkable
 quote i (VLam mv f) = Lam NoExtField mv Nothing $ quote (i + 1) $ f $ vfree $ Quote i
 quote _ VStar = inf $ Star NoExtField
@@ -708,7 +719,7 @@ quote i (VPi mv v f) =
           vfree $
             Quote i
 quote i (VNeutral n) = inf $ quoteNeutral i n
--- quote i (VVariant vars) = Inf $ Variant $ toOrderedList $ fmap (quote i) vars
+quote i (VNeutralChk n) = quoteNeutralChk i n
 quote i (VRecord flds) =
   inf $
     Record NoExtField $
@@ -739,6 +750,18 @@ quoteNeutral i (NVecElim a m mz ms k xs) =
 quoteNeutral i (NProjField r f) =
   ProjField NoExtField (quoteNeutral i r) f
 quoteNeutral _ (NPrim v) = Var NoExtField $ PrimName v
+
+quoteNeutralChk :: Int -> NeutralChk -> Expr Checkable
+quoteNeutralChk i (NCase v alts) =
+  Case NoExtField (quoteNeutral i v) $
+    CaseAlts $
+      HM.toList $
+        alts <&> \f ->
+          CaseAlt NoExtField Anonymous $
+            quote (i + 1) $
+              f $
+                vfree $
+                  Quote i
 
 boundFree :: Int -> Name -> Expr Inferable
 boundFree i (Quote k) = XExpr $ BVar $ i - k - 1
@@ -793,20 +816,43 @@ eval ctx (Open _ rcd bdy) =
 eval ctx (Variant _ flds) = VVariant $ HM.fromList $ map (Bi.second $ eval ctx) $ variantTags flds
 eval ctx (Inj _ t e) = VInj t $ eval ctx e
 eval ctx (Case _ e (CaseAlts alts)) =
-  case eval ctx e of
-    VInj t v ->
-      case HM.lookup t (HM.fromList alts) of
-        Nothing ->
-          error $
-            "Impossible: missing alternative for `"
-              <> T.unpack t
-              <> "' in the given case alternative: "
-              <> show (map fst alts)
-        Just (CaseAlt _ _ b) ->
-          eval (ctx & #localBinds %~ (v <|)) b
-    -- FIXME: Work out what NCase should be
-    v -> error $ "Impossible: case-expression with non-inj input: " <> show (pprint v)
+  evalCase (eval ctx e) $
+    HM.fromList alts <&> \(CaseAlt _ _ b) v ->
+      eval (ctx & #localBinds %~ (v <|)) b
+{-
+case eval ctx e of
+  VInj t v ->
+    case HM.lookup t (HM.fromList alts) of
+      Nothing ->
+        error $
+          "Impossible: missing alternative for `"
+            <> T.unpack t
+            <> "' in the given case alternative: "
+            <> show (map fst alts)
+      Just (CaseAlt _ _ b) ->
+        eval (ctx & #localBinds %~ (v <|)) b
+  -- FIXME: Work out what NCase should be
+  VNeutral v ->
+    VNeutral $
+      NCase v $
+        fmap (HM.fromList)
+  v -> error $ "Impossible: neither inj or neutral term given as a scrutinee of case-expression: " <> show (pprint v)
+ -}
 eval ctx (XExpr (Inf e)) = eval ctx e
+
+evalCase :: Value -> HashMap Text (Value -> Value) -> Value
+evalCase v0 alts = case v0 of
+  VInj t v ->
+    case HM.lookup t alts of
+      Nothing ->
+        error $
+          "Impossible: missing alternative for `"
+            <> T.unpack t
+            <> "' in the given case alternative: "
+            <> show (HM.keys alts)
+      Just f -> f v
+  VNeutral v -> VNeutralChk $ NCase v alts
+  v -> error $ "Impossible: neither inj or neutral term given as a scrutinee of case-expression: " <> show (pprint v)
 
 evalNatElim :: Value -> Value -> Value -> Value -> Value
 evalNatElim mVal mzVal msVal = fix $ \recur kVal ->
