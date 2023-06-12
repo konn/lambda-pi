@@ -200,8 +200,11 @@ import RIO (NFData)
 import Text.PrettyPrint.Monadic
 
 {-
-TODO: @case@s on variants, variant weakening,
-dependent records, record shrinking, record update
+TODO:
+Σ-types,
+variant weakening,
+dependent records,
+record shrinking, record update
 -}
 data Expr phase
   = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
