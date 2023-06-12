@@ -82,7 +82,7 @@ appSpaceP =
       )
 
 termP :: Parser ParsedExpr
-termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> lamP <|> varP <|> parens exprP
+termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> caseP <|> lamP <|> varP <|> parens exprP
 
 openP :: Parser ParsedExpr
 openP =
@@ -104,6 +104,28 @@ letP =
       <*> exprP
       <* reserved "in"
       <*> exprP
+
+caseP :: Parser ParsedExpr
+caseP =
+  label "case-expression" $
+    Case NoExtField
+      <$ reserved "case"
+      <*> exprP
+      <* reserved "of"
+      <*> between
+        (symbol "{")
+        (symbol "}")
+        (CaseAlts <$> (caseAltP `sepBy` symbol ";"))
+
+caseAltP :: Parser (Text, CaseAlt Parse)
+caseAltP =
+  (,)
+    <$> identifier
+    <*> ( CaseAlt NoExtField
+            <$> identifier
+            <* (reservedOp "->" <|> reservedOp "->")
+            <*> exprP
+        )
 
 piP :: Parser ParsedExpr
 piP = label "Pi-binding" $ do
