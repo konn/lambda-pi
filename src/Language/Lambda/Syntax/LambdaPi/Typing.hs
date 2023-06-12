@@ -812,8 +812,12 @@ eval ctx (Open _ rcd bdy) =
     VMkRecord flds ->
       let ctx' = ctx & #namedBinds %~ (flds <>)
        in eval ctx' bdy
+    -- FIXME: Work out what NOpen should be
+    {-
+    VNeutral v -> ...
+    VNeutralChk (Inf v) -> ...
+    -}
     otr ->
-      -- FIXME: Work out what NOpen should be
       error $
         "Impossible: open requires a record, but got a term of type: "
           <> show (pprint $ quote 0 otr)
