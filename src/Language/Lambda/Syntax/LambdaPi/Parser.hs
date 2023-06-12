@@ -123,7 +123,7 @@ caseAltP =
     <$> identifier
     <*> ( CaseAlt NoExtField
             <$> identifier
-            <* (reservedOp "->" <|> reservedOp "->")
+            <* (reservedOp "→" <|> reservedOp "->")
             <*> exprP
         )
 
