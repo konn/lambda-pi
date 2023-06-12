@@ -48,11 +48,11 @@ renameExprM = \case
   App NoExtField l r ->
     App NoExtField <$> renameExprM l <*> renameExprM r
   Lam NoExtField v mtyp body ->
-    Lam NoExtField (Just v)
+    Lam NoExtField (AlphaName v)
       <$> mapM renameExprM mtyp
       <*> local (#boundVars %~ HM.insert v 0 . fmap succ) (renameExprM body)
   Pi NoExtField mv typ body ->
-    Pi NoExtField (maybeName mv)
+    Pi NoExtField (maybe Anonymous AlphaName $ maybeName mv)
       <$> renameExprM typ
       <*> local
         ( #boundVars
@@ -60,7 +60,7 @@ renameExprM = \case
         )
         (renameExprM body)
   Let NoExtField v e body ->
-    Let NoExtField (Just v)
+    Let NoExtField (AlphaName v)
       <$> renameExprM e
       <*> local
         (#boundVars %~ HM.insert v 0 . fmap succ)

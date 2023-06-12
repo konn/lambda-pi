@@ -163,6 +163,7 @@ module Language.Lambda.Syntax.LambdaPi (
   VarLike (..),
   DocM (..),
   HasBindeeType (..),
+  AlphaName (..),
 ) where
 
 import Control.Arrow ((>>>))
@@ -177,6 +178,7 @@ import Data.Maybe
 import Data.Semigroup.Generic
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
+import Data.String (IsString, fromString)
 import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics (Generic, Rep)
@@ -225,6 +227,31 @@ data Expr phase
   | Inj (XInj phase) Text (InjArg phase)
   | XExpr (XExpr phase)
   deriving (Generic)
+
+-- | Names that has no effects for alpha-equivalence used only for the display purposes.
+data AlphaName
+  = AlphaName {runAlphaName :: Text}
+  | Anonymous
+  deriving (Show, Generic)
+
+instance VarLike AlphaName where
+  varName (AlphaName t) = pure $ Just t
+  varName Anonymous = pure $ Nothing
+
+instance IsString AlphaName where
+  fromString = AlphaName . fromString
+
+-- | N.B. Everything is regarded to be equal
+instance Eq AlphaName where
+  (==) = const $ const True
+
+-- | N.B. Everything is regarded to be equal
+instance Ord AlphaName where
+  compare = const $ const EQ
+  (<) = const $ const False
+  (<=) = const $ const True
+  (>) = const $ const False
+  (>=) = const $ const True
 
 instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
   plate = gplate
@@ -435,9 +462,9 @@ type family LamBindName p
 
 type instance LamBindName Parse = Text
 
-type instance LamBindName Rename = Maybe Text
+type instance LamBindName Rename = AlphaName
 
-type instance LamBindName (Typing m) = Maybe Text
+type instance LamBindName (Typing m) = AlphaName
 
 type family LamBindType p
 
@@ -480,9 +507,9 @@ data DepName = Indep | DepAnon | DepNamed Text
 
 type instance PiVarName Parse = DepName
 
-type instance PiVarName Rename = Maybe Text
+type instance PiVarName Rename = AlphaName
 
-type instance PiVarName (Typing _) = Maybe Text
+type instance PiVarName (Typing _) = AlphaName
 
 type family PiVarType p
 
@@ -512,9 +539,9 @@ type family LetName p
 
 type instance LetName Parse = Text
 
-type instance LetName Rename = Maybe Text
+type instance LetName Rename = AlphaName
 
-type instance LetName (Typing _) = Maybe Text
+type instance LetName (Typing _) = AlphaName
 
 type family LetRHS p
 
