@@ -111,7 +111,7 @@ renameExprM = \case
 
 renameAlt :: CaseAlt Parse -> Renamer (CaseAlt Rename)
 renameAlt (CaseAlt NoExtField v body) =
-  CaseAlt NoExtField (AlphaName v) <$> renameExprM body
+  CaseAlt NoExtField (AlphaName v) <$> abstract v (renameExprM body)
 
 abstract :: Text -> Renamer a -> Renamer a
 abstract v = local $ #boundVars %~ HM.insert v 0 . fmap succ
