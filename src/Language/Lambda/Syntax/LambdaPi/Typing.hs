@@ -71,8 +71,8 @@ toInferable = \case
   Ann NoExtField l r -> Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r -> App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (RnGlobal v) -> pure $ Var NoExtField $ Global v
-  Var NoExtField (RnPrim v) -> pure $ Var NoExtField $ PrimName v
+  Var NoExtField (RnGlobal v) -> pure $ Var NoBound $ Global v
+  Var NoExtField (RnPrim v) -> pure $ Var NoBound $ PrimName v
   Var NoExtField (RnBound v) -> pure $ XExpr $ BVar v
   Lam NoExtField v minType body -> do
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
@@ -127,8 +127,8 @@ toCheckable = \case
   Ann NoExtField l r -> fmap inf . Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ inf $ Star NoExtField
   App NoExtField l r -> fmap inf . App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (RnGlobal v) -> pure $ inf $ Var NoExtField $ Global v
-  Var NoExtField (RnPrim v) -> pure $ inf $ Var NoExtField $ PrimName v
+  Var NoExtField (RnGlobal v) -> pure $ inf $ Var NoBound $ Global v
+  Var NoExtField (RnPrim v) -> pure $ inf $ Var NoBound $ PrimName v
   Var NoExtField (RnBound v) -> pure $ inf $ XExpr $ BVar v
   Lam NoExtField mv (Just ty) body ->
     do
@@ -246,12 +246,11 @@ typeCheck _ _ mkRec@MkRecord {} ty =
       <> show (pprint mkRec)
 typeCheck _ _ (ProjField c _ _) _ = noExtCon c
 typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
-  -- FIXME: We have to treat substitution correctly (back to BoundVar)
   e' <-
     typeCheck
       (i + 1)
       (HM.insert (Local i) (Nothing, ty) ctx)
-      (subst 0 (Var NoExtField (Local i)) e)
+      (substBVar 0 (Local i) e)
       $ ty'
       $ vfree ty
       $ Local i
@@ -264,12 +263,11 @@ typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
       <> show (pprint lam)
 typeCheck i ctx (Let NoExtField v e b) ty = do
   (vty, e') <- typeInfer i ctx e
-  -- FIXME: We have to treat substitution correctly (back to BoundVar)
   b' <-
     typeCheck
       (i + 1)
       (HM.insert (Local i) (Nothing, vty) ctx)
-      (subst 0 (Var NoExtField (Local i)) b)
+      (substBVar 0 (Local i) b)
       ty
   pure $ Let ty v e' b'
 typeCheck i ctx (Open _ r b) ty = do
@@ -334,12 +332,11 @@ typeCheck i ctx (Case _ e (CaseAlts alts)) ty = do
                         )
                         $ eitherToValidation
                         $ do
-                          -- FIXME: We have to treat substitution correctly (back to BoundVar)
                           bdy' <-
                             typeCheck
                               (i + 1)
                               (HM.insert (Local i) (Nothing, tty) ctx)
-                              (subst 0 (Var NoExtField (Local i)) bdy)
+                              (substBVar 0 (Local i) bdy)
                               ty
                           pure
                             ( tty
@@ -385,8 +382,14 @@ typeInfer _ _ Star {} = pure (VStar, Star NoExtField)
 typeInfer _ _ (Var _ (PrimName p)) =
   let pTy = inferPrim p
    in pure (pTy, Var pTy $ PrimName p)
-typeInfer _ ctx (Var _ x) = case HM.lookup x ctx of
-  Just (_, t) -> pure (t, Var t x)
+typeInfer _ ctx (Var src x) = case HM.lookup x ctx of
+  Just (_, t) ->
+    pure
+      ( t
+      , case src of
+          OrigBVar i -> XExpr $ BoundVar t i
+          NoBound -> Var t x
+      )
   Nothing -> Left $ "Unknown identifier: " <> show x
 typeInfer _ _ (XExpr (BVar bd)) = Left $ "Impossible: the type-checker encounters a bound variable: " <> show bd
 typeInfer !i ctx (App NoExtField f x) = do
@@ -404,10 +407,9 @@ typeInfer i ctx (Lam NoExtField mv ty body) = do
   let ctx' = toEvalContext ctx
   ty' <- typeCheck i ctx ty VStar
   let tyVal = eval ctx' ty'
-  -- FIXME: We have to treat substitution correctly (back to BoundVar)
   (bodyTy, body') <-
     typeInfer (i + 1) (HM.insert (Local i) (Nothing, tyVal) ctx) $
-      subst 0 (Var NoExtField (Local i)) body
+      substBVar 0 (Local i) body
   let lamRetTy v = substLocal i v bodyTy
       lamTy = VPi mv tyVal lamRetTy
   pure (lamTy, Lam LambdaTypeSpec {lamBodyType = lamRetTy, lamArgType = tyVal} mv ty' body')
@@ -415,21 +417,19 @@ typeInfer i ctx (Pi NoExtField mv arg ret) = do
   arg' <- typeCheck i ctx arg VStar
   let ctx' = toEvalContext ctx
       t = eval ctx' arg'
-  -- FIXME: We have to treat substitution correctly (back to BoundVar)
 
   ret' <-
     typeCheck
       (i + 1)
       (HM.insert (Local i) (Nothing, t) ctx)
-      (subst 0 (Var NoExtField (Local i)) ret)
+      (substBVar 0 (Local i) ret)
       VStar
   pure (VStar, Pi NoExtField mv arg' ret')
 typeInfer i ctx (Let NoExtField mv e b) = do
   (vty, e') <- typeInfer i ctx e
-  -- FIXME: We have to treat substitution correctly (back to BoundVar)
   (ty, b') <-
     typeInfer (i + 1) (HM.insert (Local i) (Nothing, vty) ctx) $
-      subst 0 (Var NoExtField (Local i)) b
+      substBVar 0 (Local i) b
   pure (ty, Let ty mv e' b')
 typeInfer _ _ Nat {} = pure (VStar, Nat NoExtField)
 typeInfer _ _ Zero {} = pure (VNat, Zero VNat)
@@ -558,7 +558,7 @@ typeInfer i ctx (Case NoExtField e (CaseAlts alts)) = do
                           <$> typeInfer
                             (i + 1)
                             (HM.insert (Local i) (Nothing, tty) ctx)
-                            (subst 0 (Var NoExtField (Local i)) bdy)
+                            (substBVar 0 (Local i) bdy)
                 )
                 (HM.fromList alts)
                 tagTys
@@ -590,57 +590,57 @@ inferPrim :: Prim -> Type
 inferPrim Tt = VNeutral $ NPrim VStar Unit
 inferPrim Unit = VStar
 
-subst :: forall m. KnownTypingMode m => Int -> Expr Inferable -> Expr (Typing m) -> Expr (Typing m)
-subst !i r (Ann c e ty) = Ann c (subst i r e) (subst i r ty)
-subst !_ _ (Star c) = Star c
-subst !_ _ f@Var {} = f
-subst !i r (App e f g) = App e (subst i r f) (subst i r g)
-subst !i r (Lam x mv ann body) =
+substBVar :: forall m. KnownTypingMode m => Int -> Name -> Expr (Typing m) -> Expr (Typing m)
+substBVar !i r (Ann c e ty) = Ann c (substBVar i r e) (substBVar i r ty)
+substBVar !_ _ (Star c) = Star c
+substBVar !_ _ f@{} = f
+substBVar !i r (App e f g) = App e (substBVar i r f) (substBVar i r g)
+substBVar !i r (Lam x mv ann body) =
   case typingModeVal @m of
-    SCheck -> Lam x mv (subst i r <$> ann) $ subst (i + 1) r body
-    SInfer -> Lam x mv (subst i r ann) $ subst (i + 1) r body
-subst !i r (Pi c mv ann body) =
-  Pi c mv (subst i r ann) (subst (i + 1) r body)
-subst !i r (Let NoExtField mv e b) =
-  Let NoExtField mv (subst i r e) $ subst (i + 1) r b
-subst _ _ (Nat c) = Nat c
-subst _ _ (Zero c) = Zero c
-subst i r (Succ c n) = Succ c $ subst i r n
-subst i r (NatElim c t b ih n) =
-  NatElim c (subst i r t) (subst i r b) (subst i r ih) (subst i r n)
-subst i r (Vec c a n) = Vec c (subst i r a) (subst i r n)
-subst i r (Nil c a) = Nil c $ subst i r a
-subst i r (Cons c a n x xs) =
-  Cons c (subst i r a) (subst i r n) (subst i r x) (subst i r xs)
-subst i r (VecElim c a t b ih n xs) =
-  VecElim c (subst i r a) (subst i r t) (subst i r b) (subst i r ih) (subst i r n) (subst i r xs)
-subst i r (Record c (RecordFieldTypes flds)) =
-  Record c $ RecordFieldTypes $ map (fmap (subst i r)) flds
-subst i r (MkRecord c (MkRecordFields flds)) =
+    SCheck -> Lam x mv (substBVar i r <$> ann) $ substBVar (i + 1) r body
+    SInfer -> Lam x mv (substBVar i r ann) $ substBVar (i + 1) r body
+substBVar !i r (Pi c mv ann body) =
+  Pi c mv (substBVar i r ann) (substBVar (i + 1) r body)
+substBVar !i r (Let NoExtField mv e b) =
+  Let NoExtField mv (substBVar i r e) $ substBVar (i + 1) r b
+substBVar _ _ (Nat c) = Nat c
+substBVar _ _ (Zero c) = Zero c
+substBVar i r (Succ c n) = Succ c $ substBVar i r n
+substBVar i r (NatElim c t b ih n) =
+  NatElim c (substBVar i r t) (substBVar i r b) (substBVar i r ih) (substBVar i r n)
+substBVar i r (Vec c a n) = Vec c (substBVar i r a) (substBVar i r n)
+substBVar i r (Nil c a) = Nil c $ substBVar i r a
+substBVar i r (Cons c a n x xs) =
+  Cons c (substBVar i r a) (substBVar i r n) (substBVar i r x) (substBVar i r xs)
+substBVar i r (VecElim c a t b ih n xs) =
+  VecElim c (substBVar i r a) (substBVar i r t) (substBVar i r b) (substBVar i r ih) (substBVar i r n) (substBVar i r xs)
+substBVar i r (Record c (RecordFieldTypes flds)) =
+  Record c $ RecordFieldTypes $ map (fmap (substBVar i r)) flds
+substBVar i r (MkRecord c (MkRecordFields flds)) =
   case typingModeVal @m of
-    SCheck -> MkRecord c $ MkRecordFields $ map (fmap (subst i r)) flds
-    SInfer -> MkRecord c $ MkRecordFields $ map (fmap (subst i r)) flds
-subst i r (ProjField c e f) =
-  ProjField c (subst i r e) f
-subst i r (Open NoExtField rc b) =
-  Open NoExtField (subst i r rc) (subst i r b)
-subst !i r bd@(XExpr (BVar j))
-  | i == j = fromInferable r
+    SCheck -> MkRecord c $ MkRecordFields $ map (fmap (substBVar i r)) flds
+    SInfer -> MkRecord c $ MkRecordFields $ map (fmap (substBVar i r)) flds
+substBVar i r (ProjField c e f) =
+  ProjField c (substBVar i r e) f
+substBVar i r (Open NoExtField rc b) =
+  Open NoExtField (substBVar i r rc) (substBVar i r b)
+substBVar !i r bd@(XExpr (BVar j))
+  | i == j = fromInferable $ Var (OrigBVar i) r
   | otherwise = bd
-subst !i r (XExpr (Inf e)) = XExpr $ Inf $ subst i r e
-subst i r (Variant c (VariantTags flds)) =
-  Variant c $ VariantTags $ map (fmap (subst i r)) flds
-subst i r (Case c e (CaseAlts alts)) =
+substBVar !i r (XExpr (Inf e)) = XExpr $ Inf $ substBVar i r e
+substBVar i r (Variant c (VariantTags flds)) =
+  Variant c $ VariantTags $ map (fmap (substBVar i r)) flds
+substBVar i r (Case c e (CaseAlts alts)) =
   Case
     c
-    (subst i r e)
+    (substBVar i r e)
     $ CaseAlts
     $ map
       ( fmap $ \(CaseAlt d mv b) ->
-          CaseAlt d mv $ subst (i + 1) r b
+          CaseAlt d mv $ substBVar (i + 1) r b
       )
       alts
-subst i r (Inj c l e) = Inj c l $ subst i r e
+substBVar i r (Inj c l e) = Inj c l $ substBVar i r e
 
 fromInferable :: forall m. KnownTypingMode m => Expr Inferable -> Expr (Typing m)
 fromInferable =
@@ -693,7 +693,10 @@ type instance XStar Inferable = NoExtField
 
 type instance XStar Checkable = NoExtCon
 
-type instance XVar Inferable = NoExtField
+type instance XVar Inferable = BoundSource
+
+data BoundSource = NoBound | OrigBVar !Int
+  deriving (Show, Eq, Ord, Generic)
 
 type instance XVar Checkable = NoExtCon
 
