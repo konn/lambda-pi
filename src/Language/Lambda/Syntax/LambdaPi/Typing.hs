@@ -18,6 +18,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+-- | FIXME: Stop using mere type instance, but use GADTs to make pattern-matching concise
 module Language.Lambda.Syntax.LambdaPi.Typing (
   -- * Conversion from Renamed AST
   toInferable,
@@ -59,7 +60,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.These (These (..))
 import Data.Tuple (swap)
+import Debug.Trace qualified as DT
 import GHC.Generics (Generic)
+import GHC.Stack
 import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Eval
 import Language.Lambda.Syntax.LambdaPi.Rename
@@ -71,8 +74,8 @@ toInferable = \case
   Ann NoExtField l r -> Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r -> App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (RnGlobal v) -> pure $ Var NoBound $ Global v
-  Var NoExtField (RnPrim v) -> pure $ Var NoBound $ PrimName v
+  Var NoExtField (RnGlobal v) -> pure $ Var Unbound $ Global v
+  Var NoExtField (RnPrim v) -> pure $ Var Unbound $ PrimName v
   Var NoExtField (RnBound v) -> pure $ XExpr $ BVar v
   Lam NoExtField v minType body -> do
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
@@ -127,8 +130,8 @@ toCheckable = \case
   Ann NoExtField l r -> fmap inf . Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ inf $ Star NoExtField
   App NoExtField l r -> fmap inf . App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (RnGlobal v) -> pure $ inf $ Var NoBound $ Global v
-  Var NoExtField (RnPrim v) -> pure $ inf $ Var NoBound $ PrimName v
+  Var NoExtField (RnGlobal v) -> pure $ inf $ Var Unbound $ Global v
+  Var NoExtField (RnPrim v) -> pure $ inf $ Var Unbound $ PrimName v
   Var NoExtField (RnBound v) -> pure $ inf $ XExpr $ BVar v
   Lam NoExtField mv (Just ty) body ->
     do
@@ -204,7 +207,8 @@ toEvalContext ctx =
     & #namedBinds
       .~ HM.fromList [(a, v) | (Global a, (Just v, _)) <- HM.toList ctx]
 
-typeCheck :: Int -> Context -> Expr Checkable -> Type -> Result (Expr Eval)
+typeCheck :: HasCallStack => Int -> Context -> Expr Checkable -> Type -> Result (Expr Eval)
+typeCheck i ctx e ty | DT.trace ("Checking: " <> show (i, ctx, pprint e, ty)) False = error "No"
 typeCheck i ctx (XExpr (Inf e)) ty = do
   (ty', e') <- typeInfer i ctx e
 
@@ -251,9 +255,7 @@ typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
       (i + 1)
       (HM.insert (Local i) (Nothing, ty) ctx)
       (substBVar 0 (Local i) e)
-      $ ty'
-      $ vfree ty
-      $ Local i
+      (ty' $ vfree ty $ Local i)
   pure $ Lam LambdaTypeSpec {lamArgType = ty, lamBodyType = ty'} v (quote 0 ty) e'
 typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
   Left $
@@ -293,12 +295,12 @@ typeCheck i ctx inj@(Inj _ l e) vvar@(VVariant tags) =
           <> "' of expression `"
           <> show (pprint inj)
           <> "is not in the expected variant tags: "
-          <> show (pprint $ quote 0 vvar)
+          <> show vvar
     Just ty -> Inj tags l <$> typeCheck i ctx e ty
 typeCheck _ _ inj@Inj {} ty =
   Left $
     "Expected type `"
-      <> show (pprint (quote 0 ty))
+      <> show (pprint ty)
       <> "', but got a variant: "
       <> show (pprint inj)
 typeCheck i ctx (Case _ e (CaseAlts alts)) ty = do
@@ -372,7 +374,8 @@ typeCheck _ _ (VecElim c _ _ _ _ _ _) _ = noExtCon c
 typeCheck _ _ (Record c _) _ = noExtCon c
 typeCheck _ _ (Variant c _) _ = noExtCon c
 
-typeInfer :: Int -> Context -> Expr Inferable -> Result (Type, Expr Eval)
+typeInfer :: HasCallStack => Int -> Context -> Expr Inferable -> Result (Type, Expr Eval)
+typeInfer i ctx e | DT.trace ("Inferring: " <> show (i, ctx, pprint e)) False = error "No"
 typeInfer !i ctx (Ann _ e rho) = do
   rho' <- typeCheck i ctx rho VStar
   let !t = eval (toEvalContext ctx) rho'
@@ -388,7 +391,7 @@ typeInfer _ ctx (Var src x) = case HM.lookup x ctx of
       ( t
       , case src of
           OrigBVar i -> XExpr $ BoundVar t i
-          NoBound -> Var t x
+          Unbound -> Var t x
       )
   Nothing -> Left $ "Unknown identifier: " <> show x
 typeInfer _ _ (XExpr (BVar bd)) = Left $ "Impossible: the type-checker encounters a bound variable: " <> show bd
@@ -403,12 +406,13 @@ typeInfer !i ctx (App NoExtField f x) = do
       Left $
         "LHS of application must be has a function type, but got: "
           <> show (pprint f, pprint $ quote 0 ty)
-typeInfer i ctx (Lam NoExtField mv ty body) = do
+typeInfer i ctx l@(Lam NoExtField mv ty body) = do
   let ctx' = toEvalContext ctx
   ty' <- typeCheck i ctx ty VStar
+  () <- DT.trace ("Evaluating: " <> show (ctx, ctx', ty', pprint ty') <> "( as part of " <> show (pprint l)) $ pure ()
   let tyVal = eval ctx' ty'
   (bodyTy, body') <-
-    typeInfer (i + 1) (HM.insert (Local i) (Nothing, tyVal) ctx) $
+    typeInfer (i + 1) (HM.insert (Local i) (Just tyVal, VStar) ctx) $
       substBVar 0 (Local i) body
   let lamRetTy v = substLocal i v bodyTy
       lamTy = VPi mv tyVal lamRetTy
@@ -593,7 +597,7 @@ inferPrim Unit = VStar
 substBVar :: forall m. KnownTypingMode m => Int -> Name -> Expr (Typing m) -> Expr (Typing m)
 substBVar !i r (Ann c e ty) = Ann c (substBVar i r e) (substBVar i r ty)
 substBVar !_ _ (Star c) = Star c
-substBVar !_ _ f@{} = f
+substBVar !_ _ f@Var {} = f
 substBVar !i r (App e f g) = App e (substBVar i r f) (substBVar i r g)
 substBVar !i r (Lam x mv ann body) =
   case typingModeVal @m of
@@ -695,7 +699,7 @@ type instance XStar Checkable = NoExtCon
 
 type instance XVar Inferable = BoundSource
 
-data BoundSource = NoBound | OrigBVar !Int
+data BoundSource = Unbound | OrigBVar !Int
   deriving (Show, Eq, Ord, Generic)
 
 type instance XVar Checkable = NoExtCon
@@ -868,10 +872,11 @@ deriving instance Ord (XExprTyping m)
 
 instance Pretty PrettyEnv (XExprTyping m) where
   pretty (BVar i) = do
+    bvar <- view #boundVars
     mtn <- preview $ #boundVars . ix i
     case mtn of
       Just (t, n)
         | n > 0 -> PP.text t <> PP.char '_' <> PP.int n
         | otherwise -> PP.text t
-      Nothing -> "<<Global:" <> pretty i <> ">>"
+      Nothing -> "<<Unbound:" <> pretty i <> "/" <> PP.string (show bvar) <> ">>"
   pretty (Inf e) = pretty e

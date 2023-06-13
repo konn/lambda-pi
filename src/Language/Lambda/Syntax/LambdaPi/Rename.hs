@@ -36,6 +36,7 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Parser (Parse)
+import RIO (tshow)
 
 type RenamedExpr = Expr Rename
 
@@ -276,3 +277,8 @@ type instance CaseAltVarName Rename = AlphaName
 type instance CaseAltBody Rename = Expr Rename
 
 type instance XExpr Rename = NoExtCon
+
+instance VarLike RnId where
+  varName (RnBound i) = preview $ #boundVars . ix i . _1
+  varName (RnGlobal i) = pure $ Just i
+  varName (RnPrim p) = pure $ Just $ tshow $ pprint p

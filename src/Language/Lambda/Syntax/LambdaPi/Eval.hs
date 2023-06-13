@@ -51,7 +51,9 @@ import Data.Semigroup.Generic
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Debug.Trace qualified as DT
 import GHC.Generics (Generic)
+import GHC.Stack (HasCallStack)
 import Language.Lambda.Syntax.LambdaPi
 import Text.PrettyPrint.Monadic (Pretty (..))
 import Text.PrettyPrint.Monadic qualified as PP
@@ -204,7 +206,8 @@ boundFree :: Type -> Int -> Name -> Expr Eval
 boundFree ty i (Quote k) = XExpr $ BoundVar ty $ i - k - 1
 boundFree ty _ x = Var ty x
 
-eval :: Env -> Expr Eval -> Value
+eval :: HasCallStack => Env -> Expr Eval -> Value
+eval ctx e | DT.trace ("eval: " <> show (ctx, pprint e)) False = error "NO"
 eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var ty fv) =
@@ -564,8 +567,9 @@ data XExprEval = BoundVar !Type !Int
 instance Pretty PrettyEnv XExprEval where
   pretty (BoundVar _ i) = do
     mtn <- preview $ #boundVars . ix i
+    bvar <- view $ #boundVars
     case mtn of
       Just (t, n)
         | n > 0 -> PP.text t <> PP.char '_' <> PP.int n
         | otherwise -> PP.text t
-      Nothing -> "<<Global:" <> pretty i <> ">>"
+      Nothing -> "<<Unbound:" <> pretty i <> "/" <> PP.string (show bvar) <> ">>"
