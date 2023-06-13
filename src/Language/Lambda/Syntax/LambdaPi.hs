@@ -15,7 +15,6 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -26,20 +25,8 @@ by Andres Löh, Conor McBride, and Wouter Swiestra.
 This is a variant of LambdaPi syntax tree a la "<https://www.microsoft.com/en-us/research/uploads/prod/2016/11/trees-that-grow.pdf Trees That Grow>" by S. Najd and S. Peyton-Jones.
 -}
 module Language.Lambda.Syntax.LambdaPi (
-  -- * Phases
-  Parse,
-  Rename,
-  Typing,
-  XExprTyping (..),
-  TypingMode (..),
-  STypingMode (..),
-  KnownTypingMode (..),
-  Inferable,
-  Checkable,
-
   -- * AST
   Name (..),
-  RnId (..),
   Expr (..),
   XExpr,
 
@@ -50,7 +37,6 @@ module Language.Lambda.Syntax.LambdaPi (
 
   -- ** Primitives
   Prim (..),
-  XPrim,
 
   -- ** Field and/or Constructor extension
 
@@ -91,6 +77,7 @@ module Language.Lambda.Syntax.LambdaPi (
 
   -- *** Let-expressions
   XLet,
+  LetName,
   LetRHS,
   LetBody,
 
@@ -173,6 +160,7 @@ module Language.Lambda.Syntax.LambdaPi (
   DocM (..),
   HasBindeeType (..),
   AlphaName (..),
+  PrettyEnv (..),
   instantiate,
 ) where
 
@@ -184,7 +172,6 @@ import Data.Function (on)
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import Data.Hashable (Hashable)
-import Data.Kind (Type)
 import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Ord (comparing)
@@ -290,43 +277,12 @@ data Prim = Unit | Tt
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (Hashable)
 
-type family XPrim p
-
-type instance XPrim Parse = NoExtField
-
-type instance XPrim Rename = NoExtField
-
-type instance XPrim (Typing _) = NoExtField
-
 instance Pretty e NoExtCon where
   pretty = noExtCon
 
 data Name = Global Text | Local Int | Quote Int | PrimName Prim
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (Hashable)
-
-data Parse deriving (Show, Eq, Ord, Generic)
-
-data Rename deriving (Show, Eq, Ord, Generic)
-
-data TypingMode = Infer | Check
-  deriving (Show, Eq, Ord, Generic)
-
-data STypingMode (m :: TypingMode) where
-  SInfer :: STypingMode 'Infer
-  SCheck :: STypingMode 'Check
-
-class KnownTypingMode m where
-  typingModeVal :: STypingMode m
-
-instance KnownTypingMode 'Infer where
-  typingModeVal = SInfer
-
-instance KnownTypingMode 'Check where
-  typingModeVal = SCheck
-
-data Typing (typeMode :: TypingMode)
-  deriving (Show, Eq, Ord, Generic)
 
 data NoExtField = NoExtField
   deriving (Show, Eq, Ord, Generic)
@@ -337,69 +293,17 @@ data NoExtCon
 noExtCon :: NoExtCon -> a
 noExtCon = \case {}
 
-type Inferable = Typing 'Infer
-
-type Checkable = Typing 'Check
-
 type family XAnn phase
-
-type instance XAnn Parse = NoExtField
-
-type instance XAnn Rename = NoExtField
-
-type instance XAnn Inferable = NoExtField
-
-type instance XAnn Checkable = NoExtCon
 
 type family AnnLHS a
 
-type instance AnnLHS Parse = Expr Parse
-
-type instance AnnLHS Rename = Expr Rename
-
-type instance AnnLHS (Typing m) = Expr Checkable
-
 type family AnnRHS a
-
-type instance AnnRHS Parse = Expr Parse
-
-type instance AnnRHS Rename = Expr Rename
-
-type instance AnnRHS (Typing m) = Expr Checkable
 
 type family XStar p
 
-type instance XStar Parse = NoExtField
-
-type instance XStar Rename = NoExtField
-
-type instance XStar Inferable = NoExtField
-
-type instance XStar Checkable = NoExtCon
-
 type family XVar p
 
-type instance XVar Parse = NoExtField
-
-type instance XVar Rename = NoExtField
-
-type instance XVar Inferable = NoExtField
-
-type instance XVar Checkable = NoExtCon
-
 type family Id p
-
-type instance Id Parse = Text
-
-type instance Id Rename = RnId
-
-data RnId
-  = RnGlobal Text
-  | RnBound !Int
-  | RnPrim Prim
-  deriving (Show, Eq, Ord, Generic)
-
-type instance Id (Typing m) = FreeVar (Typing m)
 
 castVar ::
   (BoundVar p ~ BoundVar p', FreeVar p ~ FreeVar p') =>
@@ -427,89 +331,23 @@ deriving instance
 
 type family BoundVar p
 
-type instance BoundVar Parse = Text
-
-type instance BoundVar Rename = Int
-
-type instance BoundVar (Typing _) = Int
-
 type family FreeVar p
-
-type instance FreeVar Parse = Text
-
-type instance FreeVar Rename = Name
-
-type instance FreeVar (Typing _) = Name
 
 type family XApp p
 
-type instance XApp Parse = NoExtField
-
-type instance XApp Rename = NoExtField
-
-type instance XApp Inferable = NoExtField
-
-type instance XApp Checkable = NoExtCon
-
 type family AppLHS p
-
-type instance AppLHS Parse = Expr Parse
-
-type instance AppLHS Rename = Expr Rename
-
-type instance AppLHS (Typing _) = Expr Inferable
 
 type family AppRHS p
 
-type instance AppRHS Parse = Expr Parse
-
-type instance AppRHS Rename = Expr Rename
-
-type instance AppRHS (Typing _) = Expr Checkable
-
 type family XLam p
-
-type instance XLam Parse = NoExtField
-
-type instance XLam Rename = NoExtField
-
-type instance XLam (Typing _) = NoExtField
 
 type family LamBindName p
 
-type instance LamBindName Parse = Text
-
-type instance LamBindName Rename = AlphaName
-
-type instance LamBindName (Typing m) = AlphaName
-
 type family LamBindType p
-
-type instance LamBindType Parse = Maybe (Expr Parse)
-
-type instance LamBindType Rename = Maybe (Expr Rename)
-
-type instance LamBindType Inferable = Expr Checkable
-
-type instance LamBindType Checkable = Maybe (Expr Checkable)
 
 type family LamBody p
 
-type instance LamBody Parse = Expr Parse
-
-type instance LamBody Rename = Expr Rename
-
-type instance LamBody (Typing m) = Expr (Typing m)
-
 type family XPi p
-
-type instance XPi Parse = NoExtField
-
-type instance XPi Rename = NoExtField
-
-type instance XPi Inferable = NoExtField
-
-type instance XPi Checkable = NoExtCon
 
 type family PiVarName p
 
@@ -522,301 +360,73 @@ maybeName = \case
 data DepName = Indep | DepAnon | DepNamed Text
   deriving (Show, Eq, Ord, Generic)
 
-type instance PiVarName Parse = DepName
-
-type instance PiVarName Rename = AlphaName
-
-type instance PiVarName (Typing _) = AlphaName
-
 type family PiVarType p
-
-type instance PiVarType Parse = Expr Parse
-
-type instance PiVarType Rename = Expr Rename
-
-type instance PiVarType (Typing _) = Expr Checkable
 
 type family PiRHS p
 
-type instance PiRHS Parse = Expr Parse
-
-type instance PiRHS Rename = Expr Rename
-
-type instance PiRHS (Typing _) = Expr Checkable
-
 type family XLet p
-
-type instance XLet Parse = NoExtField
-
-type instance XLet Rename = NoExtField
-
-type instance XLet (Typing _) = NoExtField
 
 type family LetName p
 
-type instance LetName Parse = Text
-
-type instance LetName Rename = AlphaName
-
-type instance LetName (Typing _) = AlphaName
-
 type family LetRHS p
-
-type instance LetRHS Parse = Expr Parse
-
-type instance LetRHS Rename = Expr Rename
-
-type instance LetRHS (Typing _) = Expr Inferable
 
 type family LetBody p
 
-type instance LetBody Parse = Expr Parse
-
-type instance LetBody Rename = Expr Rename
-
-type instance LetBody (Typing e) = Expr (Typing e)
-
 type family XNat p
-
-type instance XNat Parse = NoExtField
-
-type instance XNat Rename = NoExtField
-
-type instance XNat Inferable = NoExtField
-
-type instance XNat Checkable = NoExtCon
 
 type family XZero p
 
-type instance XZero Parse = NoExtField
-
-type instance XZero Rename = NoExtField
-
-type instance XZero Inferable = NoExtField
-
-type instance XZero Checkable = NoExtCon
-
 type family XSucc p
-
-type instance XSucc Parse = NoExtField
-
-type instance XSucc Rename = NoExtField
-
-type instance XSucc Inferable = NoExtField
-
-type instance XSucc Checkable = NoExtCon
 
 type family SuccBody p
 
-type instance SuccBody Parse = Expr Parse
-
-type instance SuccBody Rename = Expr Rename
-
-type instance SuccBody (Typing _) = Expr Checkable
-
 type family XNatElim p
-
-type instance XNatElim Parse = NoExtField
-
-type instance XNatElim Rename = NoExtField
-
-type instance XNatElim Inferable = NoExtField
-
-type instance XNatElim Checkable = NoExtCon
 
 type family NatElimRetFamily a
 
-type instance NatElimRetFamily Parse = Expr Parse
-
-type instance NatElimRetFamily Rename = Expr Rename
-
-type instance NatElimRetFamily (Typing _) = Expr Checkable
-
 type family NatElimBaseCase a
-
-type instance NatElimBaseCase Parse = Expr Parse
-
-type instance NatElimBaseCase Rename = Expr Rename
-
-type instance NatElimBaseCase (Typing _) = Expr Checkable
 
 type family NatElimInductionStep a
 
-type instance NatElimInductionStep Parse = Expr Parse
-
-type instance NatElimInductionStep Rename = Expr Rename
-
-type instance NatElimInductionStep (Typing _) = Expr Checkable
-
 type family NatElimInput a
-
-type instance NatElimInput Parse = Expr Parse
-
-type instance NatElimInput Rename = Expr Rename
-
-type instance NatElimInput (Typing _) = Expr Checkable
 
 type family XVec p
 
-type instance XVec Parse = NoExtField
-
-type instance XVec Rename = NoExtField
-
-type instance XVec Inferable = NoExtField
-
-type instance XVec Checkable = NoExtCon
-
 type family VecType p
-
-type instance VecType Parse = Expr Parse
-
-type instance VecType Rename = Expr Rename
-
-type instance VecType (Typing _) = Expr Checkable
 
 type family VecLength p
 
-type instance VecLength Parse = Expr Parse
-
-type instance VecLength Rename = Expr Rename
-
-type instance VecLength (Typing _) = Expr Checkable
-
 type family XNil p
-
-type instance XNil Parse = NoExtField
-
-type instance XNil Rename = NoExtField
-
-type instance XNil Inferable = NoExtField
-
-type instance XNil Checkable = NoExtCon
 
 type family NilType p
 
-type instance NilType Parse = Expr Parse
-
-type instance NilType Rename = Expr Rename
-
-type instance NilType (Typing _) = Expr Checkable
-
 type family XCons p
-
-type instance XCons Parse = NoExtField
-
-type instance XCons Rename = NoExtField
-
-type instance XCons Inferable = NoExtField
-
-type instance XCons Checkable = NoExtCon
 
 type family ConsType p
 
-type instance ConsType Parse = Expr Parse
-
-type instance ConsType Rename = Expr Rename
-
-type instance ConsType (Typing _) = Expr Checkable
-
 type family ConsLength p
-
-type instance ConsLength Parse = Expr Parse
-
-type instance ConsLength Rename = Expr Rename
-
-type instance ConsLength (Typing _) = Expr Checkable
 
 type family ConsHead p
 
-type instance ConsHead Parse = Expr Parse
-
-type instance ConsHead Rename = Expr Rename
-
-type instance ConsHead (Typing _) = Expr Checkable
-
 type family ConsTail p
-
-type instance ConsTail Parse = Expr Parse
-
-type instance ConsTail Rename = Expr Rename
-
-type instance ConsTail (Typing _) = Expr Checkable
 
 type family XVecElim p
 
-type instance XVecElim Parse = NoExtField
-
-type instance XVecElim Rename = NoExtField
-
-type instance XVecElim Inferable = NoExtField
-
-type instance XVecElim Checkable = NoExtCon
-
 type family VecElimEltType p
-
-type instance VecElimEltType Parse = Expr Parse
-
-type instance VecElimEltType Rename = Expr Rename
-
-type instance VecElimEltType (Typing _) = Expr Checkable
 
 type family VecElimRetFamily p
 
-type instance VecElimRetFamily Parse = Expr Parse
-
-type instance VecElimRetFamily Rename = Expr Rename
-
-type instance VecElimRetFamily (Typing _) = Expr Checkable
-
 type family VecElimBaseCase p
-
-type instance VecElimBaseCase Parse = Expr Parse
-
-type instance VecElimBaseCase Rename = Expr Rename
-
-type instance VecElimBaseCase (Typing _) = Expr Checkable
 
 type family VecElimInductiveStep p
 
-type instance VecElimInductiveStep Parse = Expr Parse
-
-type instance VecElimInductiveStep Rename = Expr Rename
-
-type instance VecElimInductiveStep (Typing _) = Expr Checkable
-
 type family VecElimLength p
-
-type instance VecElimLength Parse = Expr Parse
-
-type instance VecElimLength Rename = Expr Rename
-
-type instance VecElimLength (Typing _) = Expr Checkable
 
 type family VecElimInput p
 
-type instance VecElimInput Parse = Expr Parse
-
-type instance VecElimInput Rename = Expr Rename
-
-type instance VecElimInput (Typing _) = Expr Checkable
-
 type family XRecord p
 
-type instance XRecord Parse = NoExtField
-
-type instance XRecord Rename = NoExtField
-
-type instance XRecord Inferable = NoExtField
-
-type instance XRecord Checkable = NoExtCon
-
 type family RecordFieldType p
-
-type instance RecordFieldType Parse = Expr Parse
-
-type instance RecordFieldType Rename = Expr Rename
-
-type instance RecordFieldType (Typing _) = Expr Checkable
 
 newtype RecordFieldTypes p = RecordFieldTypes {recFieldTypes :: [(Text, RecordFieldType p)]}
   deriving (Generic)
@@ -832,37 +442,11 @@ instance Ord (RecordFieldType p) => Ord (RecordFieldTypes p) where
 
 type family XProjField p
 
-type instance XProjField Parse = NoExtField
-
-type instance XProjField Rename = NoExtField
-
-type instance XProjField Inferable = NoExtField
-
-type instance XProjField Checkable = NoExtCon
-
 type family ProjFieldRecord p
-
-type instance ProjFieldRecord Parse = Expr Parse
-
-type instance ProjFieldRecord Rename = Expr Rename
-
-type instance ProjFieldRecord (Typing _) = Expr Inferable
 
 type family XMkRecord p
 
-type instance XMkRecord Parse = NoExtField
-
-type instance XMkRecord Rename = NoExtField
-
-type instance XMkRecord (Typing _) = NoExtField
-
 type family RecordField p
-
-type instance RecordField Parse = Expr Parse
-
-type instance RecordField Rename = Expr Rename
-
-type instance RecordField (Typing m) = Expr (Typing m)
 
 newtype MkRecordFields p = MkRecordFields {mkRecFields :: [(Text, RecordField p)]}
   deriving (Generic)
@@ -881,37 +465,11 @@ deriving anyclass instance Hashable (RecordField p) => Hashable (MkRecordFields 
 
 type family XOpen p
 
-type instance XOpen Parse = NoExtField
-
-type instance XOpen Rename = NoExtField
-
-type instance XOpen (Typing m) = NoExtField
-
 type family OpenRecord p
-
-type instance OpenRecord Parse = Expr Parse
-
-type instance OpenRecord Rename = Expr Rename
-
-type instance OpenRecord (Typing m) = Expr Inferable
 
 type family OpenBody p
 
-type instance OpenBody Parse = Expr Parse
-
-type instance OpenBody Rename = Expr Rename
-
-type instance OpenBody (Typing m) = Expr (Typing m)
-
 type family XVariant p
-
-type instance XVariant Parse = NoExtField
-
-type instance XVariant Rename = NoExtField
-
-type instance XVariant (Typing 'Infer) = NoExtField
-
-type instance XVariant (Typing 'Check) = NoExtCon
 
 newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantArgType p)]}
   deriving (Generic)
@@ -926,69 +484,19 @@ instance Ord (VariantArgType p) => Ord (VariantTags p) where
 
 type family VariantArgType p
 
-type instance VariantArgType Parse = Expr Parse
-
-type instance VariantArgType Rename = Expr Rename
-
-type instance VariantArgType (Typing p) = Expr Checkable
-
 type family XInj p
-
-type instance XInj Parse = NoExtField
-
-type instance XInj Rename = NoExtField
-
-type instance XInj Inferable = NoExtCon
-
-type instance XInj Checkable = NoExtField
 
 type family InjArg p
 
-type instance InjArg Parse = Expr Parse
-
-type instance InjArg Rename = Expr Rename
-
-type instance InjArg (Typing e) = Expr (Typing e)
-
 type family XCase p
-
-type instance XCase Parse = NoExtField
-
-type instance XCase Rename = NoExtField
-
-type instance XCase (Typing _) = NoExtField
 
 type family CaseArg p
 
-type instance CaseArg Parse = Expr Parse
-
-type instance CaseArg Rename = Expr Rename
-
-type instance CaseArg (Typing _) = Expr Inferable
-
 type family XCaseAlt p
-
-type instance XCaseAlt Parse = NoExtField
-
-type instance XCaseAlt Rename = NoExtField
-
-type instance XCaseAlt (Typing m) = NoExtField
 
 type family CaseAltVarName p
 
-type instance CaseAltVarName Parse = Text
-
-type instance CaseAltVarName Rename = AlphaName
-
-type instance CaseAltVarName (Typing _) = AlphaName
-
 type family CaseAltBody p
-
-type instance CaseAltBody Parse = Expr Parse
-
-type instance CaseAltBody Rename = Expr Rename
-
-type instance CaseAltBody (Typing m) = Expr (Typing m)
 
 data CaseAlt p = CaseAlt
   { xCaseAlt :: XCaseAlt p
@@ -1017,23 +525,6 @@ deriving instance FieldC Ord (CaseAlt p) => Ord (CaseAlts p)
 deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlts p)
 
 type family XExpr p
-
-type instance XExpr Parse = NoExtCon
-
-type instance XExpr Rename = NoExtCon
-
-type instance XExpr (Typing m) = XExprTyping m
-
-type XExprTyping :: TypingMode -> Type
-data XExprTyping m where
-  BVar :: Int -> XExprTyping 'Infer
-  Inf :: Expr Inferable -> XExprTyping 'Check
-
-deriving instance Show (XExprTyping m)
-
-deriving instance Eq (XExprTyping m)
-
-deriving instance Ord (XExprTyping m)
 
 data PrettyEnv = PrettyEnv
   { levels :: !(HashMap Text Int)
@@ -1279,16 +770,6 @@ instantiate var act = do
         >>> #boundVars %~ (Seq.<|) (var, lvl)
     )
     act
-
-instance Pretty PrettyEnv (XExprTyping m) where
-  pretty (BVar i) = do
-    mtn <- preview $ #boundVars . ix i
-    case mtn of
-      Just (t, n)
-        | n > 0 -> text t <> char '_' <> int n
-        | otherwise -> text t
-      Nothing -> "<<Global:" <> pretty i <> ">>"
-  pretty (Inf e) = pretty e
 
 pprint :: Pretty PrettyEnv a => a -> Doc
 pprint = execDocM (mempty @PrettyEnv) . pretty

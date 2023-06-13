@@ -26,6 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
+import Language.Lambda.Syntax.LambdaPi.Eval
 import Language.Lambda.Syntax.LambdaPi.Parser
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
@@ -138,10 +139,11 @@ checkTypeM ::
   m Type
 checkTypeM trm ty = do
   gamma <- typingContextM
-  either (throwM . TypeError) pure $
-    typeCheck 0 gamma trm ty
+  trm' <-
+    either (throwM . TypeError) pure $
+      typeCheck 0 gamma trm ty
   evalCtx <- evalContextM
-  pure $ eval evalCtx trm
+  pure $ eval evalCtx trm'
 
 data REPLException
   = ParseError String
@@ -161,10 +163,10 @@ inferEvalM ::
   m (Value, Type)
 inferEvalM trm = do
   ctx <- typingContextM
-  typ <-
+  (typ, e') <-
     either (throwM . TypeError) pure $ typeInfer 0 ctx trm
   evalCtx <- evalContextM
-  let !val = eval evalCtx trm
+  let !val = eval evalCtx e'
   pure (val, typ)
 
 typingContextM ::

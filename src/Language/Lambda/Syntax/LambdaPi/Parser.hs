@@ -1,11 +1,19 @@
+{-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- FIXME: let-and-app test case suffers
 module Language.Lambda.Syntax.LambdaPi.Parser (
+  -- * ASTs,
+  Parse,
+  ParsedExpr,
+
+  -- * Parsers
   exprP,
   Parser,
   parseOnly,
@@ -25,28 +33,29 @@ module Language.Lambda.Syntax.LambdaPi.Parser (
 
 import Control.Applicative (Alternative (..))
 import Control.Applicative.Combinators (sepBy)
-import qualified Control.Applicative.Combinators.NonEmpty as NE
+import Control.Applicative.Combinators.NonEmpty qualified as NE
 import Control.Arrow ((+++))
 import Control.Monad
 import Control.Monad.Combinators.Expr
-import qualified Data.Bifunctor as Bi
+import Data.Bifunctor qualified as Bi
 import Data.Char
 import Data.Functor
 import Data.HashSet (HashSet)
-import qualified Data.HashSet as HS
+import Data.HashSet qualified as HS
 import Data.List (foldl1')
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Semigroup
 import Data.Semigroup.Foldable (fold1)
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Void (Void)
+import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
 import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhile1P, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
-import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Megaparsec.Char.Lexer qualified as L
 
 type Parser = Parsec Void Text
 
@@ -419,3 +428,141 @@ parseNamed ::
   Text ->
   Either String a
 parseNamed name p = (errorBundlePretty +++ id) . runParser p name
+
+data Parse deriving (Show, Eq, Ord, Generic)
+
+type instance XAnn Parse = NoExtField
+
+type instance AnnLHS Parse = Expr Parse
+
+type instance AnnRHS Parse = Expr Parse
+
+type instance XStar Parse = NoExtField
+
+type instance XVar Parse = NoExtField
+
+type instance Id Parse = Text
+
+type instance BoundVar Parse = Text
+
+type instance FreeVar Parse = Text
+
+type instance XApp Parse = NoExtField
+
+type instance AppLHS Parse = Expr Parse
+
+type instance AppRHS Parse = Expr Parse
+
+type instance XLam Parse = NoExtField
+
+type instance LamBindName Parse = Text
+
+type instance LamBindType Parse = Maybe (Expr Parse)
+
+type instance LamBody Parse = Expr Parse
+
+type instance XPi Parse = NoExtField
+
+type instance PiVarName Parse = DepName
+
+type instance PiVarType Parse = Expr Parse
+
+type instance PiRHS Parse = Expr Parse
+
+type instance XLet Parse = NoExtField
+
+type instance LetName Parse = Text
+
+type instance LetRHS Parse = Expr Parse
+
+type instance LetBody Parse = Expr Parse
+
+type instance XNat Parse = NoExtField
+
+type instance XZero Parse = NoExtField
+
+type instance XSucc Parse = NoExtField
+
+type instance SuccBody Parse = Expr Parse
+
+type instance XNatElim Parse = NoExtField
+
+type instance NatElimRetFamily Parse = Expr Parse
+
+type instance NatElimBaseCase Parse = Expr Parse
+
+type instance NatElimInductionStep Parse = Expr Parse
+
+type instance NatElimInput Parse = Expr Parse
+
+type instance XVec Parse = NoExtField
+
+type instance VecType Parse = Expr Parse
+
+type instance VecLength Parse = Expr Parse
+
+type instance XNil Parse = NoExtField
+
+type instance NilType Parse = Expr Parse
+
+type instance XCons Parse = NoExtField
+
+type instance ConsType Parse = Expr Parse
+
+type instance ConsLength Parse = Expr Parse
+
+type instance ConsHead Parse = Expr Parse
+
+type instance ConsTail Parse = Expr Parse
+
+type instance XVecElim Parse = NoExtField
+
+type instance VecElimEltType Parse = Expr Parse
+
+type instance VecElimRetFamily Parse = Expr Parse
+
+type instance VecElimBaseCase Parse = Expr Parse
+
+type instance VecElimInductiveStep Parse = Expr Parse
+
+type instance VecElimLength Parse = Expr Parse
+
+type instance VecElimInput Parse = Expr Parse
+
+type instance XRecord Parse = NoExtField
+
+type instance RecordFieldType Parse = Expr Parse
+
+type instance XProjField Parse = NoExtField
+
+type instance ProjFieldRecord Parse = Expr Parse
+
+type instance XMkRecord Parse = NoExtField
+
+type instance RecordField Parse = Expr Parse
+
+type instance XOpen Parse = NoExtField
+
+type instance OpenRecord Parse = Expr Parse
+
+type instance OpenBody Parse = Expr Parse
+
+type instance XVariant Parse = NoExtField
+
+type instance VariantArgType Parse = Expr Parse
+
+type instance XInj Parse = NoExtField
+
+type instance InjArg Parse = Expr Parse
+
+type instance XCase Parse = NoExtField
+
+type instance CaseArg Parse = Expr Parse
+
+type instance XCaseAlt Parse = NoExtField
+
+type instance CaseAltVarName Parse = Text
+
+type instance CaseAltBody Parse = Expr Parse
+
+type instance XExpr Parse = NoExtCon

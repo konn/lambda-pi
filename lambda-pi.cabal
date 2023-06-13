@@ -31,6 +31,7 @@ library
       Data.List.NonEmpty.Utils
       GHC.Generics.Constraint
       Language.Lambda.Syntax.LambdaPi
+      Language.Lambda.Syntax.LambdaPi.Eval
       Language.Lambda.Syntax.LambdaPi.Parser
       Language.Lambda.Syntax.LambdaPi.Rename
       Language.Lambda.Syntax.LambdaPi.REPL
