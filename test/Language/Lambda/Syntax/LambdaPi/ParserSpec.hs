@@ -13,7 +13,6 @@ import Language.Lambda.Syntax.LambdaPi.Parser
 import Test.Tasty
 import Test.Tasty.HUnit
 
-type ParsedExpr = Expr Parse
 
 inputCases :: [(String, Expr Parse)]
 inputCases =

@@ -5,6 +5,7 @@
 module Language.Lambda.Syntax.LambdaPi.RenameSpec where
 
 import Language.Lambda.Syntax.LambdaPi
+import Language.Lambda.Syntax.LambdaPi.Parser
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Test.Tasty
 import Test.Tasty.HUnit
