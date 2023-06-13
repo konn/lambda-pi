@@ -122,7 +122,7 @@ data Env = Env
   { namedBinds :: !(HM.HashMap Text Value)
   , localBinds :: !(Seq Value)
   }
-  deriving ({- Show, -} Generic)
+  deriving (Show, Generic)
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid Env
 
 instance Eq Value where
@@ -212,7 +212,9 @@ eval ctx (Var ty fv) =
     PrimName p -> VNeutral $ NPrim ty p
     Global g | Just v <- ctx ^. #namedBinds . at g -> v
     _ -> vfree ty fv
-eval ctx (XExpr (BoundVar _ n)) = ctx ^?! #localBinds . ix n
+eval ctx (XExpr (BoundVar ty n)) =
+  fromMaybe (error $ "eval/BoundVar: oob: " <> show (n, pprint ty, ctx)) $
+    ctx ^? #localBinds . ix n
 eval ctx (App _ f x) = eval ctx f @@ eval ctx x
 eval ctx (Lam ty mv _ e) = VLam ty mv $ \x ->
   eval
@@ -417,6 +419,17 @@ data LambdaTypeSpec = LambdaTypeSpec
   }
   deriving (Generic)
 
+instance Show LambdaTypeSpec where
+  showsPrec _ spc =
+    let (arg, bdy) = lamTypeSpecRank spc
+     in showString "LambdaTypeSpec { "
+          . showString "lamArgType = "
+          . shows arg
+          . showString ", "
+          . showString "lamBodyType = "
+          . shows bdy
+          . showString " }"
+
 instance Eq LambdaTypeSpec where
   (==) = (==) `on` lamTypeSpecRank
 
@@ -531,7 +544,7 @@ data CaseTypeInfo = CaseTypeInfo
   { caseRetTy :: Type
   , caseAltArgs :: HM.HashMap Text Type
   }
-  deriving (Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic)
 
 type instance XCase Eval = CaseTypeInfo
 
