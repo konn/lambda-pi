@@ -168,6 +168,7 @@ import Control.Arrow ((>>>))
 import Control.Lens
 import Control.Monad (forM_)
 import Control.Monad.Reader.Class
+import Data.Data (Data)
 import Data.Function (on)
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
@@ -232,15 +233,17 @@ data Expr phase
   | XExpr (XExpr phase)
   deriving (Generic)
 
+deriving instance (Data p, FieldC Data (Expr p)) => Data (Expr p)
+
 -- | Names that has no effects for alpha-equivalence used only for the display purposes.
 data AlphaName
   = AlphaName {runAlphaName :: Text}
   | Anonymous
-  deriving (Show, Generic)
+  deriving (Show, Generic, Data)
 
 instance VarLike AlphaName where
   varName (AlphaName t) = pure $ Just t
-  varName Anonymous = pure $ Nothing
+  varName Anonymous = pure Nothing
 
 instance IsString AlphaName where
   fromString = AlphaName . fromString
@@ -274,7 +277,7 @@ instance Pretty e Prim where
   pretty Tt = "tt"
 
 data Prim = Unit | Tt
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
   deriving anyclass (Hashable)
 
 instance Pretty e NoExtCon where
@@ -286,6 +289,8 @@ data Name p
   | PrimName (XPrimName p) Prim
   | XName (XName p)
   deriving (Generic)
+
+deriving instance (Data p, FieldC Data (Name p)) => Data (Name p)
 
 type family XGlobal p
 
@@ -304,10 +309,10 @@ deriving anyclass instance FieldC Hashable (Name p) => Hashable (Name p)
 type family XName p
 
 data NoExtField = NoExtField
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 data NoExtCon
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 noExtCon :: NoExtCon -> a
 noExtCon = \case {}
@@ -349,7 +354,7 @@ maybeName = \case
   DepNamed t -> Just t
 
 data DepName = Indep | DepAnon | DepNamed Text
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 type family PiVarType p
 
@@ -422,6 +427,8 @@ type family RecordFieldType p
 newtype RecordFieldTypes p = RecordFieldTypes {recFieldTypes :: [(Text, RecordFieldType p)]}
   deriving (Generic)
 
+deriving instance (Data (RecordFieldType p), Data p) => Data (RecordFieldTypes p)
+
 deriving instance
   Show (RecordFieldType p) => Show (RecordFieldTypes p)
 
@@ -441,6 +448,8 @@ type family RecordField p
 
 newtype MkRecordFields p = MkRecordFields {mkRecFields :: [(Text, RecordField p)]}
   deriving (Generic)
+
+deriving instance (Data p, Data (RecordField p)) => Data (MkRecordFields p)
 
 deriving instance Show (RecordField p) => Show (MkRecordFields p)
 
@@ -464,6 +473,8 @@ type family XVariant p
 
 newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantArgType p)]}
   deriving (Generic)
+
+deriving instance (Data (VariantArgType p), Data p) => Data (VariantTags p)
 
 deriving instance Show (VariantArgType p) => Show (VariantTags p)
 
@@ -496,6 +507,8 @@ data CaseAlt p = CaseAlt
   }
   deriving (Generic)
 
+deriving instance (Data p, FieldC Data (CaseAlt p)) => Data (CaseAlt p)
+
 deriving instance FieldC Show (CaseAlt p) => Show (CaseAlt p)
 
 deriving instance FieldC Eq (CaseAlt p) => Eq (CaseAlt p)
@@ -506,6 +519,8 @@ deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlt p)
 
 newtype CaseAlts p = CaseAlts {getCaseAlts :: [(Text, CaseAlt p)]}
   deriving (Generic)
+
+deriving instance (Data p, Data (CaseAlt p)) => Data (CaseAlts p)
 
 deriving instance FieldC Show (CaseAlt p) => Show (CaseAlts p)
 

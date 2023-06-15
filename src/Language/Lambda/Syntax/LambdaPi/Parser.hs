@@ -39,6 +39,7 @@ import Control.Monad
 import Control.Monad.Combinators.Expr
 import Data.Bifunctor qualified as Bi
 import Data.Char
+import Data.Data (Data)
 import Data.Functor
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HS
@@ -429,7 +430,7 @@ parseNamed ::
   Either String a
 parseNamed name p = (errorBundlePretty +++ id) . runParser p name
 
-data Parse deriving (Show, Eq, Ord, Generic)
+data Parse deriving (Show, Eq, Ord, Generic, Data)
 
 type instance XAnn Parse = NoExtField
 

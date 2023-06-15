@@ -42,6 +42,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
 import Control.Lens hiding (Context)
 import Control.Monad.Reader (Reader, ask, asks, local, runReader)
 import Data.Bifunctor qualified as Bi
+import Data.Data (Data)
 import Data.Function (fix, on)
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
@@ -429,7 +430,7 @@ unsubstLamTy i LambdaTypeSpec {..} = do
     <*> pure (flip runReader lvl . unsubstBVarValM i . lamBodyType)
 
 unsubstBVarValM :: Int -> Value -> Reader Int Value
-unsubstBVarValM i = pure -- go
+unsubstBVarValM i = go
   where
     go VStar = pure VStar
     go (VPi mv argTy f) = do
@@ -502,7 +503,7 @@ unsubstBoundNeutral i = go
               alts
           )
 
-substLocal :: Int -> Value -> Type -> Value
+substLocal :: HasCallStack => Int -> Value -> Type -> Value
 substLocal i v (VLam lamTy mv f) = VLam (substLamSpec i v lamTy) mv $ substLocal i v . f
 substLocal _ _ VStar = VStar
 substLocal _ _ VNat = VNat
@@ -528,7 +529,7 @@ substLamSpec i v l =
     , lamBodyType = substLocal i v . lamBodyType l
     }
 
-substLocalNeutral :: Int -> Value -> Neutral -> Either Neutral Value
+substLocalNeutral :: HasCallStack => Int -> Value -> Neutral -> Either Neutral Value
 substLocalNeutral i v (NFree _ (XName (EvLocal j)))
   | i == j = Right v
 substLocalNeutral _ _ neu@NFree {} = Left neu
@@ -562,12 +563,12 @@ substLocalNeutral i v (NCase caseTy e valts) =
     Left e' -> Left $ NCase caseTy e' $ fmap (substLocal i v .) valts
     Right e' -> Right $ evalCase caseTy e' valts
 
-data Eval deriving (Show, Eq, Ord, Generic)
+data Eval deriving (Show, Eq, Ord, Generic, Data)
 
 data EvalVars
   = Quote !Int
   | EvLocal !Int
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 instance VarLike EvalVars where
   varName (EvLocal i) =

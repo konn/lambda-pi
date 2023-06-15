@@ -52,6 +52,7 @@ import Control.Lens hiding (Context)
 import Control.Monad (unless)
 import Data.Bifunctor qualified as Bi
 import Data.DList.DNonEmpty qualified as DLNE
+import Data.Data (Data)
 import Data.Either.Validation
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
@@ -65,6 +66,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.These (These (..))
 import Data.Tuple (swap)
+import Debug.Trace qualified as DT
 import GHC.Generics (Generic)
 import GHC.Stack
 import Language.Lambda.Syntax.LambdaPi
@@ -283,6 +285,7 @@ typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
         (addLocal i ty ctx)
         (substBVar 0 (XName (Local i)) e)
         (ty' $ vfree ty $ XName (EvLocal i))
+  () <- DT.trace ("quote i: " <> show ty) $ pure ()
   pure $
     Lam
       LambdaTypeSpec
@@ -438,7 +441,7 @@ typeInfer !i ctx ex@(App NoExtField f x) = do
           <> show (pprint f, pprint ty)
           <> "; during evaluating "
           <> show (pprint ex)
-typeInfer i ctx (Lam NoExtField mv ty body) = do
+typeInfer i ctx l@(Lam NoExtField mv ty body) = do
   ty' <- typeCheck i ctx ty VStar
   let ctx' = toEvalContext ctx
       tyVal = eval ctx' ty'
@@ -451,6 +454,7 @@ typeInfer i ctx (Lam NoExtField mv ty body) = do
         (i + 1)
         (addLocal i tyVal ctx)
       $ substBVar 0 (XName $ Local i) body
+  () <- DT.trace ("SubstLocal " <> show i <> " (" <> show bodyTy <> "), evaling: " <> show (pprint l)) $ pure ()
   let lamRetTy v = substLocal i v bodyTy
       lamTy = VPi mv tyVal lamRetTy
   pure
@@ -715,7 +719,7 @@ toOrderedList :: HashMap Text a -> [(Text, a)]
 toOrderedList = sortOn fst . HM.toList
 
 data TypingMode = Infer | Check
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 data STypingMode (m :: TypingMode) where
   SInfer :: STypingMode 'Infer
@@ -731,7 +735,7 @@ instance KnownTypingMode 'Check where
   typingModeVal = SCheck
 
 data Typing (typeMode :: TypingMode)
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 type Inferable = Typing 'Infer
 
@@ -754,7 +758,7 @@ type instance XVar Inferable = NoExtField
 type instance XVar Checkable = NoExtCon
 
 newtype TypingVar = Local Int
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 instance VarLike TypingVar where
   varName (Local i) =

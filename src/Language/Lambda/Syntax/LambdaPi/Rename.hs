@@ -27,6 +27,7 @@ module Language.Lambda.Syntax.LambdaPi.Rename (
 
 import Control.Lens
 import Control.Monad.Trans.Reader
+import Data.Data (Data)
 import Data.Generics.Labels ()
 import Data.HashMap.Internal.Strict qualified as HM
 import Data.HashMap.Strict (HashMap)
@@ -41,7 +42,7 @@ type RenamedExpr = Expr Rename
 type Renamer = Reader RenameEnv
 
 newtype RenameEnv = RenameEnv {boundVars :: HashMap Text Int}
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Ord, Generic, Data)
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid RenameEnv
 
 runRenamer :: Renamer a -> a
@@ -132,7 +133,7 @@ renameAlt (CaseAlt NoExtField v body) =
 abstract :: Text -> Renamer a -> Renamer a
 abstract v = local $ #boundVars %~ HM.insert v 0 . fmap succ
 
-data Rename deriving (Show, Eq, Ord, Generic)
+data Rename deriving (Show, Eq, Ord, Generic, Data)
 
 type instance XName Rename = NoExtCon
 
