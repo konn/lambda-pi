@@ -65,12 +65,11 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.These (These (..))
 import Data.Tuple (swap)
-import Debug.Trace qualified as DT
 import GHC.Generics (Generic)
 import GHC.Stack
 import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Eval
-import Language.Lambda.Syntax.LambdaPi.Rename
+import Language.Lambda.Syntax.LambdaPi.Rename (Rename)
 import Text.PrettyPrint.Monadic (Pretty (..))
 
 toInferable :: Expr Rename -> Maybe (Expr Inferable)
@@ -78,9 +77,9 @@ toInferable = \case
   Ann NoExtField l r -> Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r -> App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (Global NoExtField v) -> pure $ Var Unbound $ Global NoExtField v
-  Var NoExtField (PrimName NoExtField v) -> pure $ Var Unbound $ PrimName NoExtField v
-  Var NoExtField (Bound NoExtField v) -> pure $ Var Unbound $ Bound NoExtField v
+  Var NoExtField (Global NoExtField v) -> pure $ Var NoExtField $ Global NoExtField v
+  Var NoExtField (PrimName NoExtField v) -> pure $ Var NoExtField $ PrimName NoExtField v
+  Var NoExtField (Bound NoExtField v) -> pure $ Var NoExtField $ Bound NoExtField v
   Var NoExtField (XName c) -> noExtCon c
   Lam NoExtField v minType body -> do
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
@@ -135,9 +134,9 @@ toCheckable = \case
   Ann NoExtField l r -> fmap inf . Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ inf $ Star NoExtField
   App NoExtField l r -> fmap inf . App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (Global _ v) -> pure $ inf $ Var Unbound $ Global NoExtField v
-  Var NoExtField (PrimName _ v) -> pure $ inf $ Var Unbound $ PrimName NoExtField v
-  Var NoExtField (Bound _ v) -> pure $ inf $ Var Unbound $ Bound NoExtField v
+  Var NoExtField (Global _ v) -> pure $ inf $ Var NoExtField $ Global NoExtField v
+  Var NoExtField (PrimName _ v) -> pure $ inf $ Var NoExtField $ PrimName NoExtField v
+  Var NoExtField (Bound _ v) -> pure $ inf $ Var NoExtField $ Bound NoExtField v
   Var NoExtField (XName c) -> noExtCon c
   Lam NoExtField mv (Just ty) body ->
     do
@@ -236,7 +235,6 @@ lookupName (Global _ t) ctx = ctx ^? #globals . ix t
 lookupName _ _ = Nothing
 
 typeCheck :: HasCallStack => Int -> Context -> Expr Checkable -> Type -> Result (Expr Eval)
-typeCheck i ctx e ty | DT.trace ("Checking: " <> show (i, ctx, pprint e, ty)) False = error "No"
 typeCheck i ctx (XExpr (Inf e)) ty = do
   (ty', e') <- typeInfer i ctx e
 
@@ -279,12 +277,21 @@ typeCheck _ _ mkRec@MkRecord {} ty =
 typeCheck _ _ (ProjField c _ _) _ = noExtCon c
 typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
   e' <-
-    typeCheck
-      (i + 1)
-      (addLocal i ty ctx)
-      (substBVar 0 (XName (Local i)) e)
-      (ty' $ vfree ty $ XName (EvLocal i))
-  pure $ Lam LambdaTypeSpec {lamArgType = ty, lamBodyType = ty'} v (quote i ty) e'
+    unsubstBVar i
+      <$> typeCheck
+        (i + 1)
+        (addLocal i ty ctx)
+        (substBVar 0 (XName (Local i)) e)
+        (ty' $ vfree ty $ XName (EvLocal i))
+  pure $
+    Lam
+      LambdaTypeSpec
+        { lamArgType = ty
+        , lamBodyType = ty'
+        }
+      v
+      (quote i ty)
+      e'
 typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
   Left $
     "Expected a term of type `"
@@ -294,11 +301,12 @@ typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
 typeCheck i ctx (Let NoExtField v e b) ty = do
   (vty, e') <- typeInfer i ctx e
   b' <-
-    typeCheck
-      (i + 1)
-      (addLocal i vty ctx)
-      (substBVar 0 (XName (Local i)) b)
-      ty
+    unsubstBVar i
+      <$> typeCheck
+        (i + 1)
+        (addLocal i vty ctx)
+        (substBVar 0 (XName (Local i)) b)
+        ty
   pure $ Let ty v e' b'
 typeCheck i ctx (Open _ r b) ty = do
   (recType, e) <- typeInfer i ctx r
@@ -363,11 +371,12 @@ typeCheck i ctx (Case _ e (CaseAlts alts)) ty = do
                         $ eitherToValidation
                         $ do
                           bdy' <-
-                            typeCheck
-                              (i + 1)
-                              (addLocal i tty ctx)
-                              (substBVar 0 (XName (Local i)) bdy)
-                              ty
+                            unsubstBVar i
+                              <$> typeCheck
+                                (i + 1)
+                                (addLocal i tty ctx)
+                                (substBVar 0 (XName (Local i)) bdy)
+                                ty
                           pure
                             ( tty
                             , CaseAlt
@@ -381,7 +390,7 @@ typeCheck i ctx (Case _ e (CaseAlts alts)) ty = do
                 tagTys
       pure
         $ Case
-          CaseTypeInfo {caseRetTy = eTy, caseAltArgs = fst <$> rets}
+          CaseTypeInfo {caseRetTy = unsubstBVarVal i eTy, caseAltArgs = unsubstBVarVal i . fst <$> rets}
           e'
         $ CaseAlts
         $ toOrderedList
@@ -403,24 +412,18 @@ typeCheck _ _ (Record c _) _ = noExtCon c
 typeCheck _ _ (Variant c _) _ = noExtCon c
 
 typeInfer :: HasCallStack => Int -> Context -> Expr Inferable -> Result (Type, Expr Eval)
-typeInfer i ctx e | DT.trace ("Inferring: " <> show (i, ctx, pprint e)) False = error "No"
 typeInfer !i ctx (Ann _ e rho) = do
   rho' <- typeCheck i ctx rho VStar
   let !t = eval (toEvalContext ctx) rho'
   e' <- typeCheck i ctx e t
   pure (t, Ann t e' rho')
 typeInfer _ _ Star {} = pure (VStar, Star NoExtField)
-typeInfer _ _ (Var site (PrimName _ p)) =
+typeInfer _ _ (Var _ (PrimName _ p)) =
   let pTy = inferPrim p
-   in pure (pTy, Var pTy $ fromBoundSite (PrimName NoExtField p) site)
-typeInfer _ ctx (Var src x) = case lookupName x ctx of
+   in pure (pTy, Var pTy $ PrimName NoExtField p)
+typeInfer _ ctx (Var _ x) = case lookupName x ctx of
   Just VarInfo {varType = t} ->
-    pure
-      ( t
-      , case src of
-          OrigBVar i -> Var t $ Bound NoExtField i
-          Unbound -> Var t $ toEvalName x
-      )
+    pure (t, Var t $ toEvalName x)
   Nothing -> Left $ "Unknown identifier: " <> show x
 typeInfer !i ctx ex@(App NoExtField f x) = do
   let ctx' = toEvalContext ctx
@@ -435,42 +438,55 @@ typeInfer !i ctx ex@(App NoExtField f x) = do
           <> show (pprint f, pprint ty)
           <> "; during evaluating "
           <> show (pprint ex)
-typeInfer i ctx l@(Lam NoExtField mv ty body) = do
-  let ctx' = toEvalContext ctx
+typeInfer i ctx (Lam NoExtField mv ty body) = do
   ty' <- typeCheck i ctx ty VStar
-  () <- DT.trace ("infer/Lam: Evaluating: " <> show (ctx, ctx', ty, ty', pprint ty') <> " (as part of " <> show (l) <> ")") $ pure ()
-  let tyVal = eval ctx' ty'
+  let ctx' = toEvalContext ctx
+      tyVal = eval ctx' ty'
   (bodyTy, body') <-
-    typeInfer
-      (i + 1)
-      (addLocal i tyVal ctx)
+    fmap
+      -- Generally, the first mapping on returned type
+      -- is not needed due to eigenvariable condition.
+      (Bi.second $ unsubstBVar i)
+      $ typeInfer
+        (i + 1)
+        (addLocal i tyVal ctx)
       $ substBVar 0 (XName $ Local i) body
-  let lamRetTy v = substBound i v bodyTy
+  let lamRetTy v = substLocal i v bodyTy
       lamTy = VPi mv tyVal lamRetTy
-  pure (lamTy, Lam LambdaTypeSpec {lamBodyType = lamRetTy, lamArgType = tyVal} mv ty' body')
-typeInfer i ctx l@(Pi NoExtField mv arg ret) = do
+  pure
+    ( lamTy
+    , Lam
+        LambdaTypeSpec
+          { lamBodyType = lamRetTy
+          , lamArgType = tyVal
+          }
+        mv
+        ty'
+        body'
+    )
+typeInfer i ctx (Pi NoExtField mv arg ret) = do
   arg' <- typeCheck i ctx arg VStar
   let ctx' = toEvalContext ctx
-  () <- DT.trace ("infer/Pi: Evaluating: " <> show (ctx, ctx', arg', pprint arg') <> " (as part of " <> show (pprint l) <> ")") $ pure ()
-  let t = eval ctx' arg'
-
+      t = eval ctx' arg'
   ret' <-
-    typeCheck
-      (i + 1)
-      (addLocal i t ctx)
-      (substBVar 0 (XName $ Local i) ret)
-      VStar
+    unsubstBVar i
+      <$> typeCheck
+        (i + 1)
+        (addLocal i t ctx)
+        (substBVar 0 (XName $ Local i) ret)
+        VStar
   pure (VStar, Pi NoExtField mv arg' ret')
 typeInfer i ctx (Let NoExtField mv e b) = do
   (vty, e') <- typeInfer i ctx e
   (ty, b') <-
-    typeInfer
-      (i + 1)
-      (addLocal i vty ctx)
-      $ substBVar 0 (XName $ Local i) b
+    Bi.second (unsubstBVar i)
+      <$> typeInfer
+        (i + 1)
+        (addLocal i vty ctx)
+        (substBVar 0 (XName $ Local i) b)
   pure (ty, Let ty mv e' b')
 typeInfer _ _ Nat {} = pure (VStar, Nat NoExtField)
-typeInfer _ _ Zero {} = pure (VNat, Zero VNat)
+typeInfer _ _ Zero {} = pure (VNat, Zero NoExtField)
 typeInfer i ctx (Succ NoExtField k) = (VNat,) . Succ NoExtField <$> typeCheck i ctx k VNat
 typeInfer i ctx (NatElim NoExtField m mz ms k) = do
   m' <- typeCheck i ctx m $ VPi (AlphaName "k") VNat $ const VStar
@@ -592,7 +608,7 @@ typeInfer i ctx (Case NoExtField e (CaseAlts alts)) = do
                               )
                         )
                         $ eitherToValidation
-                        $ fmap (CaseAlt NoExtField mv)
+                        $ fmap (CaseAlt NoExtField mv . unsubstBVar i)
                           <$> typeInfer
                             (i + 1)
                             (addLocal i tty ctx)
@@ -625,9 +641,7 @@ typeInfer i ctx (Case NoExtField e (CaseAlts alts)) = do
 typeInfer _ _ (Inj c _ _) = noExtCon c
 typeInfer _ _ (XExpr c) = case c of {}
 
-fromBoundSite :: Name Eval -> BoundSource -> Name Eval
-fromBoundSite v Unbound = v
-fromBoundSite _ (OrigBVar i) = Bound NoExtField i
+-- fromBoundSite v _ = v
 
 toEvalName :: Name (Typing m) -> Name Eval
 toEvalName (Global _ v) = Global NoExtField v
@@ -643,7 +657,7 @@ substBVar :: forall m. KnownTypingMode m => Int -> Name Inferable -> Expr (Typin
 substBVar !i r (Ann c e ty) = Ann c (substBVar i r e) (substBVar i r ty)
 substBVar !_ _ (Star c) = Star c
 substBVar !i r bd@(Var _ (Bound _ j))
-  | i == j = fromInferable $ Var (OrigBVar j) r
+  | i == j = fromInferable $ Var NoExtField r
   | otherwise = bd
 substBVar !_ _ f@Var {} = f
 substBVar !i r (App e f g) = App e (substBVar i r f) (substBVar i r g)
@@ -697,13 +711,6 @@ fromInferable =
     SInfer -> id
     SCheck -> inf
 
-{-
-subst i r (Lam NoExtField t e) =
-  case typingModeVal @m of
-    SInfer -> Lam NoExtField (subst i r t) $ subst (i + 1) r e
-    SCheck -> Lam NoExtField (subst i r <$> t) $ subst (i + 1) r e
- -}
-
 toOrderedList :: HashMap Text a -> [(Text, a)]
 toOrderedList = sortOn fst . HM.toList
 
@@ -742,10 +749,7 @@ type instance XStar Inferable = NoExtField
 
 type instance XStar Checkable = NoExtCon
 
-type instance XVar Inferable = BoundSource
-
-data BoundSource = Unbound | OrigBVar !Int
-  deriving (Show, Eq, Ord, Generic)
+type instance XVar Inferable = NoExtField
 
 type instance XVar Checkable = NoExtCon
 
@@ -753,14 +757,10 @@ newtype TypingVar = Local Int
   deriving (Show, Eq, Ord, Generic)
 
 instance VarLike TypingVar where
-  varName (Local i) = do
-    mtn <- preview $ #boundVars . ix i
-    case mtn of
-      Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
-      Nothing ->
-        pure $
-          Just $
-            "<<Local: " <> T.pack (show i) <> ">>"
+  varName (Local i) =
+    pure $
+      Just $
+        "<<Local: " <> T.pack (show i) <> ">>"
 
 type instance XName (Typing _) = TypingVar
 

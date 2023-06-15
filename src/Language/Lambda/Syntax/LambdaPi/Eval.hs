@@ -25,7 +25,9 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   Type,
   Neutral (..),
   eval,
-  substBound,
+  unsubstBVar,
+  unsubstBVarVal,
+  substLocal,
   LambdaTypeSpec (..),
   EvalVars (..),
   vapps,
@@ -38,6 +40,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
 ) where
 
 import Control.Lens hiding (Context)
+import Control.Monad.Reader (Reader, ask, asks, local, runReader)
 import Data.Bifunctor qualified as Bi
 import Data.Function (fix, on)
 import Data.Generics.Labels ()
@@ -48,10 +51,8 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe
 import Data.Ord (comparing)
 import Data.Semigroup.Generic
-import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Debug.Trace qualified as DT
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Language.Lambda.Syntax.LambdaPi
@@ -122,7 +123,7 @@ vfree = fmap VNeutral . NFree
 
 data Env = Env
   { namedBinds :: !(HM.HashMap Text Value)
-  , boundValues :: !(Seq Value)
+  , boundValues :: ![Value]
   }
   deriving (Show, Generic)
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid Env
@@ -145,7 +146,7 @@ quote i (VLam ls@LambdaTypeSpec {..} mv f) =
             Quote i
 quote _ VStar = Star NoExtField
 quote _ VNat = Nat NoExtField
-quote _ VZero = Zero VNat
+quote _ VZero = Zero NoExtField
 quote i (VSucc k) = Succ NoExtField $ quote i k
 quote i (VVec a n) = Vec NoExtField (quote i a) (quote i n)
 quote i (VNil a) = Nil NoExtField (quote i a)
@@ -210,7 +211,6 @@ boundFree ty i (XName (Quote k)) = Var ty $ Bound NoExtField $ i - k - 1
 boundFree ty _ x = Var ty x
 
 eval :: HasCallStack => Env -> Expr Eval -> Value
-eval ctx e | DT.trace ("eval: " <> show (ctx, pprint e)) False = error "NO"
 eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var ty fv) =
@@ -221,7 +221,7 @@ eval ctx (Var ty fv) =
       fromMaybe (error $ "eval/BoundVar: oob: " <> show (n, pprint ty, ctx)) $
         ctx ^? #boundValues . ix n
     _ -> vfree ty fv
-eval ctx (App t f x) = DT.trace ("Evaluating app under: " <> show (t, f, x, ctx)) $ eval ctx f @@ eval ctx x
+eval ctx (App _ f x) = eval ctx f @@ eval ctx x
 eval ctx (Lam ty mv _ e) = VLam ty mv $ \x ->
   eval
     (ctx & #boundValues %~ (x <|))
@@ -334,52 +334,220 @@ l @@ r = error $ "Could not apply: " <> show ((pprint l, typeOf l), (pprint r, t
 vapps :: NonEmpty Type -> Type
 vapps = foldl1 (@@)
 
-substBound :: Int -> Value -> Type -> Value
-substBound i v (VLam lamTy mv f) = VLam (substLamSpec i v lamTy) mv $ substBound i v . f
-substBound _ _ VStar = VStar
-substBound _ _ VNat = VNat
-substBound _ _ VZero = VZero
-substBound i v (VSucc va) = VSucc $ substBound i v va
-substBound i v (VPi mv va f) =
-  VPi mv (substBound i v va) $ substBound i v . f
-substBound i v (VNeutral neu) =
+unsubstBVarVal :: Int -> Value -> Value
+unsubstBVarVal = fmap (`runReader` 0) . unsubstBVarValM
+
+unsubstBVar :: Int -> Expr Eval -> Expr Eval
+unsubstBVar i = flip runReader 0 . go
+  where
+    go v@(Var ty (XName (EvLocal j)))
+      | j == i = do
+          lvl <- ask
+          -- NOTE: This isn't needed if occurs check passed
+          ty' <- unsubstBVarValM i ty
+          pure $ Var ty' $ Bound NoExtField lvl
+      | otherwise = pure v
+    go (Var ty n) =
+      Var <$> unsubstBVarValM i ty <*> pure n
+    go (Pi NoExtField mn l r) =
+      Pi NoExtField mn
+        <$> go l
+        <*> local (+ 1) (go r)
+    go (Lam lamTy mn l r) =
+      Lam
+        <$> unsubstLamTy i lamTy
+        <*> pure mn
+        <*> go l
+        <*> local (+ 1) (go r)
+    go (Ann e l r) = Ann <$> unsubstBVarValM i e <*> go l <*> go r
+    go (App e l r) = App <$> unsubstBVarValM i e <*> go l <*> go r
+    go (Let c mn e v) =
+      Let <$> unsubstBVarValM i c <*> pure mn <*> go e <*> local (+ 1) (go v)
+    go s@Star {} = pure s
+    go s@Nat {} = pure s
+    go s@Zero {} = pure s
+    go (Succ NoExtField n) = Succ NoExtField <$> go n
+    go (NatElim ty t t0 tsucc n) =
+      NatElim
+        <$> unsubstBVarValM i ty
+        <*> go t
+        <*> go t0
+        <*> go tsucc
+        <*> go n
+    go (Vec NoExtField x n) =
+      Vec NoExtField <$> go x <*> go n
+    go (Nil NoExtField c) = Nil NoExtField <$> go c
+    go (Cons NoExtField ty n x xs) =
+      Cons NoExtField
+        <$> go ty
+        <*> go n
+        <*> go x
+        <*> go xs
+    go (VecElim ty x t tNil tCons n xs) =
+      VecElim
+        <$> unsubstBVarValM i ty
+        <*> go x
+        <*> go t
+        <*> go tNil
+        <*> go tCons
+        <*> go n
+        <*> go xs
+    go (Record NoExtField (RecordFieldTypes flds)) =
+      Record NoExtField . RecordFieldTypes <$> mapM (mapM go) flds
+    go (MkRecord tys (MkRecordFields flds)) =
+      MkRecord
+        <$> mapM (unsubstBVarValM i) tys
+        <*> (MkRecordFields <$> mapM (mapM go) flds)
+    go (ProjField ty e l) =
+      ProjField <$> unsubstBVarValM i ty <*> go e <*> pure l
+    go (Open ty r b) =
+      Open <$> unsubstBVarValM i ty <*> go r <*> go b
+    go (Variant NoExtField (VariantTags flds)) =
+      Variant NoExtField . VariantTags <$> mapM (mapM go) flds
+    go (Inj tags l p) =
+      Inj <$> mapM (unsubstBVarValM i) tags <*> pure l <*> go p
+    go (Case caseTy e (CaseAlts alts)) =
+      Case
+        <$> unsubstBVarCaseInfo i caseTy
+        <*> go e
+        <*> (CaseAlts <$> local (+ 1) (mapM (mapM goAlt) alts))
+    go (XExpr c) = noExtCon c
+    goAlt (CaseAlt NoExtField name a) =
+      CaseAlt NoExtField name <$> go a
+
+unsubstBVarCaseInfo :: Int -> CaseTypeInfo -> Reader Int CaseTypeInfo
+unsubstBVarCaseInfo i CaseTypeInfo {..} =
+  CaseTypeInfo
+    <$> unsubstBVarValM i caseRetTy
+    <*> mapM (unsubstBVarValM i) caseAltArgs
+
+unsubstLamTy :: Int -> LambdaTypeSpec -> Reader Int LambdaTypeSpec
+unsubstLamTy i LambdaTypeSpec {..} = do
+  lvl <- ask
+  LambdaTypeSpec
+    <$> unsubstBVarValM i lamArgType
+    <*> pure (flip runReader lvl . unsubstBVarValM i . lamBodyType)
+
+unsubstBVarValM :: Int -> Value -> Reader Int Value
+unsubstBVarValM i = pure -- go
+  where
+    go VStar = pure VStar
+    go (VPi mv argTy f) = do
+      lvl <- ask
+      VPi mv
+        <$> unsubstBVarValM i argTy
+        <*> pure (flip runReader lvl . unsubstBVarValM i . f)
+    go (VLam lt name f) = do
+      lvl <- ask
+      VLam
+        <$> unsubstLamTy i lt
+        <*> pure name
+        <*> pure (flip runReader lvl . unsubstBVarValM i . f)
+    go VNat = pure VNat
+    go VZero = pure VZero
+    go (VSucc e) = VSucc <$> go e
+    go (VVec a n) = VVec <$> go a <*> go n
+    go (VNil ty) = VNil <$> go ty
+    go (VCons a n x xs) =
+      VCons <$> go a <*> go n <*> go x <*> go xs
+    go (VRecord flds) = VRecord <$> mapM go flds
+    go (VMkRecord fldTys flds) =
+      VMkRecord <$> mapM go fldTys <*> mapM go flds
+    go (VVariant tags) = VVariant <$> mapM go tags
+    go (VInj alts l v) = VInj <$> mapM go alts <*> pure l <*> go v
+    go (VNeutral n) = VNeutral <$> unsubstBoundNeutral i n
+
+unsubstBoundNeutral :: Int -> Neutral -> Reader Int Neutral
+unsubstBoundNeutral i = go
+  where
+    go (NFree ty v) =
+      NFree
+        <$> unsubstBVarValM i ty
+        <*> case v of
+          XName (EvLocal j)
+            | j == i -> asks $ Bound NoExtField
+          _ -> pure v
+    go (NPrim ty p) = NPrim <$> unsubstBVarValM i ty <*> pure p
+    go (NApp ty l v) =
+      NApp
+        <$> unsubstBVarValM i ty
+        <*> go l
+        <*> unsubstBVarValM i v
+    go (NNatElim ty t t0 tsucc n) =
+      NNatElim
+        <$> unsubstBVarValM i ty
+        <*> unsubstBVarValM i t
+        <*> unsubstBVarValM i t0
+        <*> unsubstBVarValM i tsucc
+        <*> go n
+    go (NVecElim ty x t t0 tsucc n xs) =
+      NVecElim
+        <$> unsubstBVarValM i ty
+        <*> unsubstBVarValM i x
+        <*> unsubstBVarValM i t
+        <*> unsubstBVarValM i t0
+        <*> unsubstBVarValM i tsucc
+        <*> unsubstBVarValM i n
+        <*> go xs
+    go (NProjField ty p l) =
+      NProjField <$> unsubstBVarValM i ty <*> go p <*> pure l
+    go (NCase ty scr alts) = do
+      lvl <- ask
+      NCase
+        <$> unsubstBVarCaseInfo i ty
+        <*> go scr
+        <*> pure
+          ( fmap
+              ((flip runReader lvl . unsubstBVarValM i) .)
+              alts
+          )
+
+substLocal :: Int -> Value -> Type -> Value
+substLocal i v (VLam lamTy mv f) = VLam (substLamSpec i v lamTy) mv $ substLocal i v . f
+substLocal _ _ VStar = VStar
+substLocal _ _ VNat = VNat
+substLocal _ _ VZero = VZero
+substLocal i v (VSucc va) = VSucc $ substLocal i v va
+substLocal i v (VPi mv va f) =
+  VPi mv (substLocal i v va) $ substLocal i v . f
+substLocal i v (VNeutral neu) =
   either VNeutral id $ substLocalNeutral i v neu
-substBound i v (VVec va va') = VVec (substBound i v va) (substBound i v va')
-substBound i v (VNil va) = VNil $ substBound i v va
-substBound i v (VCons va va' va2 va3) =
-  VCons (substBound i v va) (substBound i v va') (substBound i v va2) (substBound i v va3)
-substBound i v (VRecord flds) = VRecord $ fmap (substBound i v) flds
-substBound i v (VMkRecord fldTy flds) = VMkRecord (substBound i v <$> fldTy) $ substBound i v <$> flds
-substBound i v (VVariant flds) = VVariant $ fmap (substBound i v) flds
-substBound i v (VInj alts l e) = VInj (substBound i v <$> alts) l $ substBound i v e
+substLocal i v (VVec va va') = VVec (substLocal i v va) (substLocal i v va')
+substLocal i v (VNil va) = VNil $ substLocal i v va
+substLocal i v (VCons va va' va2 va3) =
+  VCons (substLocal i v va) (substLocal i v va') (substLocal i v va2) (substLocal i v va3)
+substLocal i v (VRecord flds) = VRecord $ fmap (substLocal i v) flds
+substLocal i v (VMkRecord fldTy flds) = VMkRecord (substLocal i v <$> fldTy) $ substLocal i v <$> flds
+substLocal i v (VVariant flds) = VVariant $ fmap (substLocal i v) flds
+substLocal i v (VInj alts l e) = VInj (substLocal i v <$> alts) l $ substLocal i v e
 
 substLamSpec :: Int -> Value -> LambdaTypeSpec -> LambdaTypeSpec
 substLamSpec i v l =
   LambdaTypeSpec
-    { lamArgType = substBound i v $ lamArgType l
-    , lamBodyType = substBound i v . lamBodyType l
+    { lamArgType = substLocal i v $ lamArgType l
+    , lamBodyType = substLocal i v . lamBodyType l
     }
 
 substLocalNeutral :: Int -> Value -> Neutral -> Either Neutral Value
-substLocalNeutral i v (NFree _ (Bound _ j))
+substLocalNeutral i v (NFree _ (XName (EvLocal j)))
   | i == j = Right v
 substLocalNeutral _ _ neu@NFree {} = Left neu
 substLocalNeutral i v (NApp retTy neu' va) =
-  let va' = substBound i v va
+  let va' = substLocal i v va
    in Bi.bimap (\vf' -> NApp retTy vf' va) (@@ va') $
         substLocalNeutral i v neu'
 substLocalNeutral i v (NNatElim retTy f f0 fsucc neuK) =
-  let f' = substBound i v f
-      f0' = substBound i v f0
-      fsucc' = substBound i v fsucc
+  let f' = substLocal i v f
+      f0' = substLocal i v f0
+      fsucc' = substLocal i v fsucc
    in Bi.bimap (NNatElim retTy f' f0' fsucc') (evalNatElim retTy f' f0' fsucc') $
         substLocalNeutral i v neuK
 substLocalNeutral i v (NVecElim retTy a f fnil fcons k kv) =
-  let aVal = substBound i v a
-      fVal = substBound i v f
-      fnilVal = substBound i v fnil
-      fconsVal = substBound i v fcons
-      kVal = substBound i v k
+  let aVal = substLocal i v a
+      fVal = substLocal i v f
+      fnilVal = substLocal i v fnil
+      fconsVal = substLocal i v fcons
+      kVal = substLocal i v k
    in Bi.bimap
         (NVecElim retTy aVal fVal fnilVal fconsVal kVal)
         (evalVecElim retTy aVal fVal fnilVal fconsVal kVal)
@@ -391,7 +559,7 @@ substLocalNeutral i v (NProjField retTy r f) =
 substLocalNeutral _ _ (NPrim retTy p) = Left $ NPrim retTy p
 substLocalNeutral i v (NCase caseTy e valts) =
   case substLocalNeutral i v e of
-    Left e' -> Left $ NCase caseTy e' $ fmap (substBound i v .) valts
+    Left e' -> Left $ NCase caseTy e' $ fmap (substLocal i v .) valts
     Right e' -> Right $ evalCase caseTy e' valts
 
 data Eval deriving (Show, Eq, Ord, Generic)
@@ -402,14 +570,10 @@ data EvalVars
   deriving (Show, Eq, Ord, Generic)
 
 instance VarLike EvalVars where
-  varName (EvLocal i) = do
-    mtn <- preview $ #boundVars . ix i
-    case mtn of
-      Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
-      Nothing ->
-        pure $
-          Just $
-            "<<EvLocal: " <> T.pack (show i) <> ">>"
+  varName (EvLocal i) =
+    pure $
+      Just $
+        "<<EvLocal: " <> T.pack (show i) <> ">>"
   varName (Quote i) = pure $ Just $ "<<Quote:" <> tshow i <> ">>"
 
 type instance XName Eval = EvalVars
@@ -491,7 +655,7 @@ type instance LetBody Eval = Expr Eval
 
 type instance XNat Eval = NoExtField
 
-type instance XZero Eval = Type
+type instance XZero Eval = NoExtField
 
 type instance XSucc Eval = NoExtField
 
