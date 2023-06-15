@@ -23,7 +23,6 @@ module Language.Lambda.Syntax.LambdaPi.Rename (
 
   -- * ASTs
   Rename,
-  RnId (..),
 ) where
 
 import Control.Lens
@@ -36,7 +35,6 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Parser (Parse)
-import RIO (tshow)
 
 type RenamedExpr = Expr Rename
 
@@ -54,12 +52,12 @@ renameExpr = runRenamer . renameExprM
 
 renameExprM :: Expr Parse -> Renamer (Expr Rename)
 renameExprM = \case
-  Var NoExtField "tt" -> pure $ Var NoExtField $ RnPrim Tt
-  Var NoExtField "Unit" -> pure $ Var NoExtField $ RnPrim Unit
+  Var NoExtField "tt" -> pure $ Var NoExtField $ PrimName NoExtField Tt
+  Var NoExtField "Unit" -> pure $ Var NoExtField $ PrimName NoExtField Unit
   Var NoExtField v ->
     view (#boundVars . at v) <&> \case
-      Just i -> Var NoExtField $ RnBound i
-      Nothing -> Var NoExtField $ RnGlobal v
+      Just i -> Var NoExtField $ Bound NoExtField i
+      Nothing -> Var NoExtField $ Global NoExtField v
   Ann NoExtField l r ->
     Ann NoExtField <$> renameExprM l <*> renameExprM r
   Star NoExtField -> pure $ Star NoExtField
@@ -136,6 +134,18 @@ abstract v = local $ #boundVars %~ HM.insert v 0 . fmap succ
 
 data Rename deriving (Show, Eq, Ord, Generic)
 
+type instance XName Rename = NoExtCon
+
+type instance XGlobal Rename = NoExtField
+
+type instance XBound Rename = NoExtField
+
+type instance XPrimName Rename = NoExtField
+
+type instance Id Rename = Name Rename
+
+type instance XName Rename = NoExtCon
+
 type instance XAnn Rename = NoExtField
 
 type instance AnnLHS Rename = Expr Rename
@@ -145,18 +155,6 @@ type instance AnnRHS Rename = Expr Rename
 type instance XStar Rename = NoExtField
 
 type instance XVar Rename = NoExtField
-
-type instance Id Rename = RnId
-
-data RnId
-  = RnGlobal Text
-  | RnBound !Int
-  | RnPrim Prim
-  deriving (Show, Eq, Ord, Generic)
-
-type instance BoundVar Rename = Int
-
-type instance FreeVar Rename = Name
 
 type instance XApp Rename = NoExtField
 
@@ -277,8 +275,3 @@ type instance CaseAltVarName Rename = AlphaName
 type instance CaseAltBody Rename = Expr Rename
 
 type instance XExpr Rename = NoExtCon
-
-instance VarLike RnId where
-  varName (RnBound i) = preview $ #boundVars . ix i . _1
-  varName (RnGlobal i) = pure $ Just i
-  varName (RnPrim p) = pure $ Just $ tshow $ pprint p

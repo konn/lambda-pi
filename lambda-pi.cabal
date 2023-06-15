@@ -56,6 +56,7 @@ library
     , dlist
     , either
     , equational-reasoning
+    , filtrable
     , fmlist
     , generic-deriving
     , generic-lens
@@ -106,6 +107,7 @@ executable lambda-pi-exe
     , dlist
     , either
     , equational-reasoning
+    , filtrable
     , fmlist
     , generic-deriving
     , generic-lens
@@ -162,6 +164,7 @@ test-suite lambda-pi-test
     , dlist
     , either
     , equational-reasoning
+    , filtrable
     , fmlist
     , generic-deriving
     , generic-lens

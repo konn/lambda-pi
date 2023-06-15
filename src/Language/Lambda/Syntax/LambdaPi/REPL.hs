@@ -41,7 +41,7 @@ data Stmt
   | Assume (NonEmpty (Text, Expr Parse))
   deriving (Show)
 
-newtype REPLContext = REPLCtx {bindings :: HashMap Text (Maybe Value, Type)}
+newtype REPLContext = REPLCtx {bindings :: HashMap Text VarInfo}
   deriving (Show, Generic)
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid REPLContext
 
@@ -73,7 +73,7 @@ letM ::
   m ()
 letM var inf = do
   (val, ty) <- inferEvalM inf
-  mx <- #bindings . at var <<?= (Just val, ty)
+  mx <- #bindings . at var <<?= VarInfo {varValue = Just val, varType = ty}
   when (isJust mx) $ do
     logWarn $ "Overriding existing binding for `" <> display var <> "'"
   logInfo $ display var <> " : " <> displayShow ty
@@ -121,7 +121,7 @@ assumeM var e = do
   case toCheckable $ renameExpr e of
     Just ty -> do
       tyVal <- checkTypeM ty VStar
-      m <- #bindings . at var <<?= (Nothing, tyVal)
+      m <- #bindings . at var <<?= VarInfo {varValue = Nothing, varType = tyVal}
       when (isJust m) $
         logWarn $
           "Overriding existing binding for `" <> display var <> "'"
@@ -171,13 +171,15 @@ inferEvalM trm = do
 
 typingContextM ::
   MonadState REPLContext m => m Context
-typingContextM = HM.mapKeys Global <$> use #bindings
+typingContextM =
+  use #bindings <&> \gs ->
+    mempty {globals = gs}
 
 evalContextM ::
   MonadState REPLContext m => m Env
 evalContextM =
   use #bindings <&> \dic ->
-    mempty & #namedBinds .~ HM.mapMaybe fst dic
+    mempty & #namedBinds .~ HM.mapMaybe varValue dic
 
 stmtP :: Parser Stmt
 stmtP = clearP <|> letP <|> assumeP <|> Eval <$> exprP

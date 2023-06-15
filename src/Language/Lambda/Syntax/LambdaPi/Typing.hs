@@ -12,6 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -25,7 +26,9 @@ module Language.Lambda.Syntax.LambdaPi.Typing (
   toCheckable,
 
   -- * Type checking and inference
-  Context,
+  Context (..),
+  VarInfo (..),
+  toEvalContext,
   Env (..),
   Value (..),
   Type,
@@ -53,9 +56,11 @@ import Data.Either.Validation
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
+import Data.IntMap.Strict (IntMap)
 import Data.List
 import Data.Map qualified as Map
 import Data.Semialign.Indexed
+import Data.Semigroup.Generic
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.These (These (..))
@@ -67,16 +72,16 @@ import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Eval
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Text.PrettyPrint.Monadic (Pretty (..))
-import Text.PrettyPrint.Monadic qualified as PP
 
 toInferable :: Expr Rename -> Maybe (Expr Inferable)
 toInferable = \case
   Ann NoExtField l r -> Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ Star NoExtField
   App NoExtField l r -> App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (RnGlobal v) -> pure $ Var Unbound $ Global v
-  Var NoExtField (RnPrim v) -> pure $ Var Unbound $ PrimName v
-  Var NoExtField (RnBound v) -> pure $ XExpr $ BVar v
+  Var NoExtField (Global NoExtField v) -> pure $ Var Unbound $ Global NoExtField v
+  Var NoExtField (PrimName NoExtField v) -> pure $ Var Unbound $ PrimName NoExtField v
+  Var NoExtField (Bound NoExtField v) -> pure $ Var Unbound $ Bound NoExtField v
+  Var NoExtField (XName c) -> noExtCon c
   Lam NoExtField v minType body -> do
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
   Pi NoExtField mv srcTy dstTy ->
@@ -130,9 +135,10 @@ toCheckable = \case
   Ann NoExtField l r -> fmap inf . Ann NoExtField <$> toCheckable l <*> toCheckable r
   Star NoExtField -> pure $ inf $ Star NoExtField
   App NoExtField l r -> fmap inf . App NoExtField <$> toInferable l <*> toCheckable r
-  Var NoExtField (RnGlobal v) -> pure $ inf $ Var Unbound $ Global v
-  Var NoExtField (RnPrim v) -> pure $ inf $ Var Unbound $ PrimName v
-  Var NoExtField (RnBound v) -> pure $ inf $ XExpr $ BVar v
+  Var NoExtField (Global _ v) -> pure $ inf $ Var Unbound $ Global NoExtField v
+  Var NoExtField (PrimName _ v) -> pure $ inf $ Var Unbound $ PrimName NoExtField v
+  Var NoExtField (Bound _ v) -> pure $ inf $ Var Unbound $ Bound NoExtField v
+  Var NoExtField (XName c) -> noExtCon c
   Lam NoExtField mv (Just ty) body ->
     do
       fmap inf . Lam NoExtField mv <$> toCheckable ty <*> toInferable body
@@ -195,7 +201,15 @@ toCheckable = \case
             )
   XExpr x -> noExtCon x
 
-type Context = HashMap Name (Maybe Value, Type)
+data VarInfo = VarInfo {varType :: Type, varValue :: Maybe Value}
+  deriving (Show, Eq, Ord, Generic)
+
+data Context = Context
+  { globals :: HashMap Text VarInfo
+  , locals :: IntMap Type
+  }
+  deriving (Show, Eq, Ord, Generic)
+  deriving (Semigroup, Monoid) via GenericSemigroupMonoid Context
 
 type Result = Either String
 
@@ -205,7 +219,21 @@ toEvalContext :: Context -> Env
 toEvalContext ctx =
   mempty
     & #namedBinds
-      .~ HM.fromList [(a, v) | (Global a, (Just v, _)) <- HM.toList ctx]
+      .~ HM.mapMaybe varValue (ctx ^. #globals)
+
+{- & #localBinds
+  .~ fmap
+    (\(ty, k) -> vfree ty $ XName $ EvLocal k)
+    (ctx ^. #bounds) -}
+
+addLocal :: Int -> Type -> Context -> Context
+addLocal i ty = #locals . at i ?~ ty
+
+lookupName :: Name Inferable -> Context -> Maybe VarInfo
+lookupName (XName (Local i)) ctx =
+  ctx ^? #locals . ix i . to (`VarInfo` Nothing)
+lookupName (Global _ t) ctx = ctx ^? #globals . ix t
+lookupName _ _ = Nothing
 
 typeCheck :: HasCallStack => Int -> Context -> Expr Checkable -> Type -> Result (Expr Eval)
 typeCheck i ctx e ty | DT.trace ("Checking: " <> show (i, ctx, pprint e, ty)) False = error "No"
@@ -253,10 +281,10 @@ typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
   e' <-
     typeCheck
       (i + 1)
-      (HM.insert (Local i) (Nothing, ty) ctx)
-      (substBVar 0 (Local i) e)
-      (ty' $ vfree ty $ Local i)
-  pure $ Lam LambdaTypeSpec {lamArgType = ty, lamBodyType = ty'} v (quote 0 ty) e'
+      (addLocal i ty ctx)
+      (substBVar 0 (XName (Local i)) e)
+      (ty' $ vfree ty $ XName (EvLocal i))
+  pure $ Lam LambdaTypeSpec {lamArgType = ty, lamBodyType = ty'} v (quote i ty) e'
 typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
   Left $
     "Expected a term of type `"
@@ -268,8 +296,8 @@ typeCheck i ctx (Let NoExtField v e b) ty = do
   b' <-
     typeCheck
       (i + 1)
-      (HM.insert (Local i) (Nothing, vty) ctx)
-      (substBVar 0 (Local i) b)
+      (addLocal i vty ctx)
+      (substBVar 0 (XName (Local i)) b)
       ty
   pure $ Let ty v e' b'
 typeCheck i ctx (Open _ r b) ty = do
@@ -277,15 +305,15 @@ typeCheck i ctx (Open _ r b) ty = do
   -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
   case recType of
     VRecord fldTys -> do
-      let newCtx = HM.mapKeys Global $ HM.map (Nothing,) fldTys
-          ctx' = newCtx <> ctx
+      let newCtx = HM.map (`VarInfo` Nothing) fldTys
+          ctx' = ctx & #globals %~ (newCtx <>)
       -- FIXME: We have to treat substitution correctly (back to BoundVar)
       b' <- typeCheck i ctx' b ty
       pure $ Open ty e b'
     otr ->
       Left $
         "open expression requires a record, but got a term of type: "
-          <> show (pprint $ quote 0 otr)
+          <> show (pprint otr)
 typeCheck i ctx inj@(Inj _ l e) vvar@(VVariant tags) =
   case HM.lookup l tags of
     Nothing ->
@@ -309,7 +337,7 @@ typeCheck i ctx (Case _ e (CaseAlts alts)) ty = do
     Nothing ->
       Left $
         "A variant is expected in a case-expression, but a term of type: "
-          <> show (pprint (quote 0 eTy))
+          <> show (pprint eTy)
     Just tagTys -> do
       rets <-
         Bi.first (("Checking case-expression failed: " <>) . unlines . DLNE.toList) $
@@ -337,8 +365,8 @@ typeCheck i ctx (Case _ e (CaseAlts alts)) ty = do
                           bdy' <-
                             typeCheck
                               (i + 1)
-                              (HM.insert (Local i) (Nothing, tty) ctx)
-                              (substBVar 0 (Local i) bdy)
+                              (addLocal i tty ctx)
+                              (substBVar 0 (XName (Local i)) bdy)
                               ty
                           pure
                             ( tty
@@ -382,20 +410,19 @@ typeInfer !i ctx (Ann _ e rho) = do
   e' <- typeCheck i ctx e t
   pure (t, Ann t e' rho')
 typeInfer _ _ Star {} = pure (VStar, Star NoExtField)
-typeInfer _ _ (Var _ (PrimName p)) =
+typeInfer _ _ (Var site (PrimName _ p)) =
   let pTy = inferPrim p
-   in pure (pTy, Var pTy $ PrimName p)
-typeInfer _ ctx (Var src x) = case HM.lookup x ctx of
-  Just (_, t) ->
+   in pure (pTy, Var pTy $ fromBoundSite (PrimName NoExtField p) site)
+typeInfer _ ctx (Var src x) = case lookupName x ctx of
+  Just VarInfo {varType = t} ->
     pure
       ( t
       , case src of
-          OrigBVar i -> XExpr $ BoundVar t i
-          Unbound -> Var t x
+          OrigBVar i -> Var t $ Bound NoExtField i
+          Unbound -> Var t $ toEvalName x
       )
   Nothing -> Left $ "Unknown identifier: " <> show x
-typeInfer _ _ (XExpr (BVar bd)) = Left $ "Impossible: the type-checker encounters a bound variable: " <> show bd
-typeInfer !i ctx (App NoExtField f x) = do
+typeInfer !i ctx ex@(App NoExtField f x) = do
   let ctx' = toEvalContext ctx
   typeInfer i ctx f >>= \case
     (VPi _ t t', f') -> do
@@ -404,36 +431,43 @@ typeInfer !i ctx (App NoExtField f x) = do
       pure (retTy, App retTy f' x')
     (ty, _) ->
       Left $
-        "LHS of application must be has a function type, but got: "
-          <> show (pprint f, pprint $ quote 0 ty)
+        "LHS of application must be a function, but got: "
+          <> show (pprint f, pprint ty)
+          <> "; during evaluating "
+          <> show (pprint ex)
 typeInfer i ctx l@(Lam NoExtField mv ty body) = do
   let ctx' = toEvalContext ctx
   ty' <- typeCheck i ctx ty VStar
-  () <- DT.trace ("Evaluating: " <> show (ctx, ctx', ty', pprint ty') <> "( as part of " <> show (pprint l)) $ pure ()
+  () <- DT.trace ("infer/Lam: Evaluating: " <> show (ctx, ctx', ty, ty', pprint ty') <> " (as part of " <> show (l) <> ")") $ pure ()
   let tyVal = eval ctx' ty'
   (bodyTy, body') <-
-    typeInfer (i + 1) (HM.insert (Local i) (Just tyVal, VStar) ctx) $
-      substBVar 0 (Local i) body
-  let lamRetTy v = substLocal i v bodyTy
+    typeInfer
+      (i + 1)
+      (addLocal i tyVal ctx)
+      $ substBVar 0 (XName $ Local i) body
+  let lamRetTy v = substBound i v bodyTy
       lamTy = VPi mv tyVal lamRetTy
   pure (lamTy, Lam LambdaTypeSpec {lamBodyType = lamRetTy, lamArgType = tyVal} mv ty' body')
-typeInfer i ctx (Pi NoExtField mv arg ret) = do
+typeInfer i ctx l@(Pi NoExtField mv arg ret) = do
   arg' <- typeCheck i ctx arg VStar
   let ctx' = toEvalContext ctx
-      t = eval ctx' arg'
+  () <- DT.trace ("infer/Pi: Evaluating: " <> show (ctx, ctx', arg', pprint arg') <> " (as part of " <> show (pprint l) <> ")") $ pure ()
+  let t = eval ctx' arg'
 
   ret' <-
     typeCheck
       (i + 1)
-      (HM.insert (Local i) (Nothing, t) ctx)
-      (substBVar 0 (Local i) ret)
+      (addLocal i t ctx)
+      (substBVar 0 (XName $ Local i) ret)
       VStar
   pure (VStar, Pi NoExtField mv arg' ret')
 typeInfer i ctx (Let NoExtField mv e b) = do
   (vty, e') <- typeInfer i ctx e
   (ty, b') <-
-    typeInfer (i + 1) (HM.insert (Local i) (Nothing, vty) ctx) $
-      substBVar 0 (Local i) b
+    typeInfer
+      (i + 1)
+      (addLocal i vty ctx)
+      $ substBVar 0 (XName $ Local i) b
   pure (ty, Let ty mv e' b')
 typeInfer _ _ Nat {} = pure (VStar, Nat NoExtField)
 typeInfer _ _ Zero {} = pure (VNat, Zero VNat)
@@ -516,8 +550,8 @@ typeInfer i ctx (Open _ r b) = do
   -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
   case recType of
     VRecord fldTys -> do
-      let newCtx = HM.mapKeys Global $ HM.map (Nothing,) fldTys
-          ctx' = newCtx <> ctx
+      let newCtx = HM.map (`VarInfo` Nothing) fldTys
+          ctx' = ctx & #globals %~ (newCtx <>)
       -- FIXME: We have to treat substitution correctly (back to BoundVar)
       (retTy, b') <- typeInfer i ctx' b
       pure (retTy, Open retTy r' b')
@@ -561,8 +595,8 @@ typeInfer i ctx (Case NoExtField e (CaseAlts alts)) = do
                         $ fmap (CaseAlt NoExtField mv)
                           <$> typeInfer
                             (i + 1)
-                            (HM.insert (Local i) (Nothing, tty) ctx)
-                            (substBVar 0 (Local i) bdy)
+                            (addLocal i tty ctx)
+                            (substBVar 0 (XName $ Local i) bdy)
                 )
                 (HM.fromList alts)
                 tagTys
@@ -589,14 +623,28 @@ typeInfer i ctx (Case NoExtField e (CaseAlts alts)) = do
             "Type mismatch: distinct returned types: "
               <> show (map pprint $ Map.keys tyMaps)
 typeInfer _ _ (Inj c _ _) = noExtCon c
+typeInfer _ _ (XExpr c) = case c of {}
+
+fromBoundSite :: Name Eval -> BoundSource -> Name Eval
+fromBoundSite v Unbound = v
+fromBoundSite _ (OrigBVar i) = Bound NoExtField i
+
+toEvalName :: Name (Typing m) -> Name Eval
+toEvalName (Global _ v) = Global NoExtField v
+toEvalName (Bound _ v) = Bound NoExtField v
+toEvalName (PrimName _ v) = PrimName NoExtField v
+toEvalName (XName (Local v)) = XName (EvLocal v)
 
 inferPrim :: Prim -> Type
 inferPrim Tt = VNeutral $ NPrim VStar Unit
 inferPrim Unit = VStar
 
-substBVar :: forall m. KnownTypingMode m => Int -> Name -> Expr (Typing m) -> Expr (Typing m)
+substBVar :: forall m. KnownTypingMode m => Int -> Name Inferable -> Expr (Typing m) -> Expr (Typing m)
 substBVar !i r (Ann c e ty) = Ann c (substBVar i r e) (substBVar i r ty)
 substBVar !_ _ (Star c) = Star c
+substBVar !i r bd@(Var _ (Bound _ j))
+  | i == j = fromInferable $ Var (OrigBVar j) r
+  | otherwise = bd
 substBVar !_ _ f@Var {} = f
 substBVar !i r (App e f g) = App e (substBVar i r f) (substBVar i r g)
 substBVar !i r (Lam x mv ann body) =
@@ -628,9 +676,6 @@ substBVar i r (ProjField c e f) =
   ProjField c (substBVar i r e) f
 substBVar i r (Open NoExtField rc b) =
   Open NoExtField (substBVar i r rc) (substBVar i r b)
-substBVar !i r bd@(XExpr (BVar j))
-  | i == j = fromInferable $ Var (OrigBVar i) r
-  | otherwise = bd
 substBVar !i r (XExpr (Inf e)) = XExpr $ Inf $ substBVar i r e
 substBVar i r (Variant c (VariantTags flds)) =
   Variant c $ VariantTags $ map (fmap (substBVar i r)) flds
@@ -704,11 +749,28 @@ data BoundSource = Unbound | OrigBVar !Int
 
 type instance XVar Checkable = NoExtCon
 
-type instance Id (Typing m) = FreeVar (Typing m)
+newtype TypingVar = Local Int
+  deriving (Show, Eq, Ord, Generic)
 
-type instance BoundVar (Typing _) = Int
+instance VarLike TypingVar where
+  varName (Local i) = do
+    mtn <- preview $ #boundVars . ix i
+    case mtn of
+      Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
+      Nothing ->
+        pure $
+          Just $
+            "<<Local: " <> T.pack (show i) <> ">>"
 
-type instance FreeVar (Typing _) = Name
+type instance XName (Typing _) = TypingVar
+
+type instance XGlobal (Typing _) = NoExtField
+
+type instance XBound (Typing _) = NoExtField
+
+type instance XPrimName (Typing _) = NoExtField
+
+type instance Id (Typing m) = Name (Typing m)
 
 type instance XApp Inferable = NoExtField
 
@@ -861,7 +923,6 @@ type instance CaseAltBody (Typing m) = Expr (Typing m)
 type instance XExpr (Typing m) = XExprTyping m
 
 data XExprTyping m where
-  BVar :: Int -> XExprTyping 'Infer
   Inf :: Expr Inferable -> XExprTyping 'Check
 
 deriving instance Show (XExprTyping m)
@@ -871,12 +932,4 @@ deriving instance Eq (XExprTyping m)
 deriving instance Ord (XExprTyping m)
 
 instance Pretty PrettyEnv (XExprTyping m) where
-  pretty (BVar i) = do
-    bvar <- view #boundVars
-    mtn <- preview $ #boundVars . ix i
-    case mtn of
-      Just (t, n)
-        | n > 0 -> PP.text t <> PP.char '_' <> PP.int n
-        | otherwise -> PP.text t
-      Nothing -> "<<Unbound:" <> pretty i <> "/" <> PP.string (show bvar) <> ">>"
   pretty (Inf e) = pretty e

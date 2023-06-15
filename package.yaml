@@ -32,6 +32,7 @@ dependencies:
 - diagnose
 - dlist
 - either
+- filtrable
 - these
 - equational-reasoning
 - fmlist

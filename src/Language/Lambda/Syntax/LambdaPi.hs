@@ -27,6 +27,10 @@ This is a variant of LambdaPi syntax tree a la "<https://www.microsoft.com/en-us
 module Language.Lambda.Syntax.LambdaPi (
   -- * AST
   Name (..),
+  XName,
+  XGlobal,
+  XBound,
+  XPrimName,
   Expr (..),
   XExpr,
 
@@ -51,10 +55,6 @@ module Language.Lambda.Syntax.LambdaPi (
   -- *** Variables
   XVar,
   Id,
-  Var (..),
-  castVar,
-  BoundVar,
-  FreeVar,
 
   -- *** Application
   XApp,
@@ -280,9 +280,28 @@ data Prim = Unit | Tt
 instance Pretty e NoExtCon where
   pretty = noExtCon
 
-data Name = Global Text | Local Int | Quote Int | PrimName Prim
-  deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (Hashable)
+data Name p
+  = Global (XGlobal p) Text
+  | Bound (XBound p) Int
+  | PrimName (XPrimName p) Prim
+  | XName (XName p)
+  deriving (Generic)
+
+type family XGlobal p
+
+type family XBound p
+
+type family XPrimName p
+
+deriving instance FieldC Show (Name p) => Show (Name p)
+
+deriving instance FieldC Eq (Name p) => Eq (Name p)
+
+deriving instance FieldC Ord (Name p) => Ord (Name p)
+
+deriving anyclass instance FieldC Hashable (Name p) => Hashable (Name p)
+
+type family XName p
 
 data NoExtField = NoExtField
   deriving (Show, Eq, Ord, Generic)
@@ -304,34 +323,6 @@ type family XStar p
 type family XVar p
 
 type family Id p
-
-castVar ::
-  (BoundVar p ~ BoundVar p', FreeVar p ~ FreeVar p') =>
-  Var p ->
-  Var p'
-castVar (Bound b) = Bound b
-castVar (Free b) = Free b
-
-data Var p
-  = Bound (BoundVar p)
-  | Free (FreeVar p)
-  deriving (Generic)
-
-deriving instance
-  (Show (BoundVar p), Show (FreeVar p)) =>
-  Show (Var p)
-
-deriving instance
-  (Eq (BoundVar p), Eq (FreeVar p)) =>
-  Eq (Var p)
-
-deriving instance
-  (Ord (BoundVar p), Ord (FreeVar p)) =>
-  Ord (Var p)
-
-type family BoundVar p
-
-type family FreeVar p
 
 type family XApp p
 
@@ -547,18 +538,26 @@ instance VarLike Text where
 instance VarLike (Maybe Text) where
   varName = pure
 
-instance VarLike Name where
-  varName (Local i) = do
-    mtn <- preview $ #boundVars . ix i
+instance VarLike (XName p) => VarLike (Name p) where
+  {-   varName (Local _ i) = do
+      mtn <- preview $ #boundVars . ix i
+      case mtn of
+        Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
+        Nothing ->
+          pure $
+            Just $
+              "<<Local: " <> T.pack (show i) <> ">>" -}
+  varName (Bound _ j) = do
+    mtn <- preview $ #boundVars . ix j
     case mtn of
       Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
       Nothing ->
         pure $
           Just $
-            "<<Local: " <> T.pack (show i) <> ">>"
-  varName (Global t) = pure $ Just t
-  varName q@Quote {} = error $ "Could not occur: " <> show q
-  varName (PrimName p) = pure $ Just $ T.pack $ show $ pprint p
+            "<<Bound: " <> T.pack (show j) <> ">>"
+  varName (Global _ t) = pure $ Just t
+  varName (PrimName _ p) = pure $ Just $ T.pack $ show $ pprint p
+  varName (XName xn) = varName xn
 
 class HasBindeeType v where
   type BindeeType v

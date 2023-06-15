@@ -443,10 +443,6 @@ type instance XVar Parse = NoExtField
 
 type instance Id Parse = Text
 
-type instance BoundVar Parse = Text
-
-type instance FreeVar Parse = Text
-
 type instance XApp Parse = NoExtField
 
 type instance AppLHS Parse = Expr Parse

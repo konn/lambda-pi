@@ -25,15 +25,15 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   Type,
   Neutral (..),
   eval,
-  substLocal,
+  substBound,
   LambdaTypeSpec (..),
+  EvalVars (..),
   vapps,
   vfree,
 
   -- * ASTs
   quote,
   Eval,
-  XExprEval (..),
   CaseTypeInfo (..),
 ) where
 
@@ -55,8 +55,8 @@ import Debug.Trace qualified as DT
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Language.Lambda.Syntax.LambdaPi
+import RIO (tshow)
 import Text.PrettyPrint.Monadic (Pretty (..))
-import Text.PrettyPrint.Monadic qualified as PP
 
 data Value
   = VLam LambdaTypeSpec AlphaName (Value -> Value)
@@ -98,7 +98,7 @@ instance Pretty e (Expr Eval) => Pretty e Value where
   pretty = pretty . quote 0
 
 data Neutral
-  = NFree Type Name
+  = NFree Type (Name Eval)
   | NPrim Type Prim
   | NApp Type Neutral Value
   | NNatElim Type Value Value Value Neutral
@@ -117,12 +117,12 @@ typeOfNeutral (NVecElim retTy _ _ _ _ _ _) = retTy
 typeOfNeutral (NProjField retTy _ _) = retTy
 typeOfNeutral (NCase CaseTypeInfo {..} _ _) = caseRetTy
 
-vfree :: Type -> Name -> Value
+vfree :: Type -> Name Eval -> Value
 vfree = fmap VNeutral . NFree
 
 data Env = Env
   { namedBinds :: !(HM.HashMap Text Value)
-  , localBinds :: !(Seq Value)
+  , boundValues :: !(Seq Value)
   }
   deriving (Show, Generic)
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid Env
@@ -141,7 +141,8 @@ quote i (VLam ls@LambdaTypeSpec {..} mv f) =
     quote (i + 1) $
       f $
         vfree lamArgType $
-          Quote i
+          XName $
+            Quote i
 quote _ VStar = Star NoExtField
 quote _ VNat = Nat NoExtField
 quote _ VZero = Zero VNat
@@ -155,7 +156,8 @@ quote i (VPi mv v f) =
     quote (i + 1) $
       f $
         vfree VStar $
-          Quote i
+          XName $
+            Quote i
 quote i (VNeutral n) = quoteNeutral i n
 quote i (VRecord flds) =
   Record NoExtField $
@@ -186,7 +188,7 @@ quoteNeutral i (NVecElim ty a m mz ms k xs) =
     quoteNeutral i xs
 quoteNeutral i (NProjField ty r f) =
   ProjField ty (quoteNeutral i r) f
-quoteNeutral _ (NPrim ty v) = Var ty $ PrimName v
+quoteNeutral _ (NPrim ty v) = Var ty $ PrimName NoExtField v
 quoteNeutral i (NCase ty@CaseTypeInfo {..} v alts) =
   Case ty (quoteNeutral i v) $
     CaseAlts $
@@ -197,13 +199,14 @@ quoteNeutral i (NCase ty@CaseTypeInfo {..} v alts) =
                 quote (i + 1) $
                   f $
                     vfree argType $
-                      Quote i
+                      XName $
+                        Quote i
           )
           caseAltArgs
           alts
 
-boundFree :: Type -> Int -> Name -> Expr Eval
-boundFree ty i (Quote k) = XExpr $ BoundVar ty $ i - k - 1
+boundFree :: Type -> Int -> Name Eval -> Expr Eval
+boundFree ty i (XName (Quote k)) = Var ty $ Bound NoExtField $ i - k - 1
 boundFree ty _ x = Var ty x
 
 eval :: HasCallStack => Env -> Expr Eval -> Value
@@ -212,22 +215,22 @@ eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var ty fv) =
   case fv of
-    PrimName p -> VNeutral $ NPrim ty p
-    Global g | Just v <- ctx ^. #namedBinds . at g -> v
+    PrimName _ p -> VNeutral $ NPrim ty p
+    Global _ g | Just v <- ctx ^. #namedBinds . at g -> v
+    Bound _ n ->
+      fromMaybe (error $ "eval/BoundVar: oob: " <> show (n, pprint ty, ctx)) $
+        ctx ^? #boundValues . ix n
     _ -> vfree ty fv
-eval ctx (XExpr (BoundVar ty n)) =
-  fromMaybe (error $ "eval/BoundVar: oob: " <> show (n, pprint ty, ctx)) $
-    ctx ^? #localBinds . ix n
-eval ctx (App _ f x) = eval ctx f @@ eval ctx x
+eval ctx (App t f x) = DT.trace ("Evaluating app under: " <> show (t, f, x, ctx)) $ eval ctx f @@ eval ctx x
 eval ctx (Lam ty mv _ e) = VLam ty mv $ \x ->
   eval
-    (ctx & #localBinds %~ (x <|))
+    (ctx & #boundValues %~ (x <|))
     e
 eval ctx (Pi _ mv t t') =
-  VPi mv (eval ctx t) $ \x -> eval (ctx & #localBinds %~ (x <|)) t'
+  VPi mv (eval ctx t) $ \x -> eval (ctx & #boundValues %~ (x <|)) t'
 eval ctx (Let _ _ e b) =
   eval
-    (ctx & #localBinds %~ (eval ctx e <|))
+    (ctx & #boundValues %~ (eval ctx e <|))
     b
 eval _ Nat {} = VNat
 eval _ Zero {} = VZero
@@ -264,7 +267,8 @@ eval ctx (Inj alts t e) = VInj alts t $ eval ctx e
 eval ctx (Case cinfo e (CaseAlts alts)) =
   evalCase cinfo (eval ctx e) $
     HM.fromList alts <&> \(CaseAlt _ _ b) v ->
-      eval (ctx & #localBinds %~ (v <|)) b
+      eval (ctx & #boundValues %~ (v <|)) b
+eval _ (XExpr c) = noExtCon c
 
 evalCase :: CaseTypeInfo -> Value -> HashMap Text (Value -> Value) -> Value
 evalCase cinfo v0 alts = case v0 of
@@ -320,62 +324,62 @@ evalProjField retTy f =
 
 infixl 9 @@
 
-(@@) :: Value -> Value -> Value
+(@@) :: HasCallStack => Value -> Value -> Value
 VLam _ _ f @@ r = f r
 VNeutral neu @@ r
   | VPi _ _ f <- typeOfNeutral neu =
       VNeutral $ NApp (f $ typeOf r) neu r
-l @@ r = error $ "Could not apply: " <> show (pprint l, pprint r)
+l @@ r = error $ "Could not apply: " <> show ((pprint l, typeOf l), (pprint r, typeOf r))
 
 vapps :: NonEmpty Type -> Type
 vapps = foldl1 (@@)
 
-substLocal :: Int -> Value -> Type -> Value
-substLocal i v (VLam lamTy mv f) = VLam (substLamSpec i v lamTy) mv $ substLocal i v . f
-substLocal _ _ VStar = VStar
-substLocal _ _ VNat = VNat
-substLocal _ _ VZero = VZero
-substLocal i v (VSucc va) = VSucc $ substLocal i v va
-substLocal i v (VPi mv va f) =
-  VPi mv (substLocal i v va) $ substLocal i v . f
-substLocal i v (VNeutral neu) =
+substBound :: Int -> Value -> Type -> Value
+substBound i v (VLam lamTy mv f) = VLam (substLamSpec i v lamTy) mv $ substBound i v . f
+substBound _ _ VStar = VStar
+substBound _ _ VNat = VNat
+substBound _ _ VZero = VZero
+substBound i v (VSucc va) = VSucc $ substBound i v va
+substBound i v (VPi mv va f) =
+  VPi mv (substBound i v va) $ substBound i v . f
+substBound i v (VNeutral neu) =
   either VNeutral id $ substLocalNeutral i v neu
-substLocal i v (VVec va va') = VVec (substLocal i v va) (substLocal i v va')
-substLocal i v (VNil va) = VNil $ substLocal i v va
-substLocal i v (VCons va va' va2 va3) =
-  VCons (substLocal i v va) (substLocal i v va') (substLocal i v va2) (substLocal i v va3)
-substLocal i v (VRecord flds) = VRecord $ fmap (substLocal i v) flds
-substLocal i v (VMkRecord fldTy flds) = VMkRecord (substLocal i v <$> fldTy) $ substLocal i v <$> flds
-substLocal i v (VVariant flds) = VVariant $ fmap (substLocal i v) flds
-substLocal i v (VInj alts l e) = VInj (substLocal i v <$> alts) l $ substLocal i v e
+substBound i v (VVec va va') = VVec (substBound i v va) (substBound i v va')
+substBound i v (VNil va) = VNil $ substBound i v va
+substBound i v (VCons va va' va2 va3) =
+  VCons (substBound i v va) (substBound i v va') (substBound i v va2) (substBound i v va3)
+substBound i v (VRecord flds) = VRecord $ fmap (substBound i v) flds
+substBound i v (VMkRecord fldTy flds) = VMkRecord (substBound i v <$> fldTy) $ substBound i v <$> flds
+substBound i v (VVariant flds) = VVariant $ fmap (substBound i v) flds
+substBound i v (VInj alts l e) = VInj (substBound i v <$> alts) l $ substBound i v e
 
 substLamSpec :: Int -> Value -> LambdaTypeSpec -> LambdaTypeSpec
 substLamSpec i v l =
   LambdaTypeSpec
-    { lamArgType = substLocal i v $ lamArgType l
-    , lamBodyType = substLocal i v . lamBodyType l
+    { lamArgType = substBound i v $ lamArgType l
+    , lamBodyType = substBound i v . lamBodyType l
     }
 
 substLocalNeutral :: Int -> Value -> Neutral -> Either Neutral Value
-substLocalNeutral i v (NFree _ (Local j))
+substLocalNeutral i v (NFree _ (Bound _ j))
   | i == j = Right v
 substLocalNeutral _ _ neu@NFree {} = Left neu
 substLocalNeutral i v (NApp retTy neu' va) =
-  let va' = substLocal i v va
+  let va' = substBound i v va
    in Bi.bimap (\vf' -> NApp retTy vf' va) (@@ va') $
         substLocalNeutral i v neu'
 substLocalNeutral i v (NNatElim retTy f f0 fsucc neuK) =
-  let f' = substLocal i v f
-      f0' = substLocal i v f0
-      fsucc' = substLocal i v fsucc
+  let f' = substBound i v f
+      f0' = substBound i v f0
+      fsucc' = substBound i v fsucc
    in Bi.bimap (NNatElim retTy f' f0' fsucc') (evalNatElim retTy f' f0' fsucc') $
         substLocalNeutral i v neuK
 substLocalNeutral i v (NVecElim retTy a f fnil fcons k kv) =
-  let aVal = substLocal i v a
-      fVal = substLocal i v f
-      fnilVal = substLocal i v fnil
-      fconsVal = substLocal i v fcons
-      kVal = substLocal i v k
+  let aVal = substBound i v a
+      fVal = substBound i v f
+      fnilVal = substBound i v fnil
+      fconsVal = substBound i v fcons
+      kVal = substBound i v k
    in Bi.bimap
         (NVecElim retTy aVal fVal fnilVal fconsVal kVal)
         (evalVecElim retTy aVal fVal fnilVal fconsVal kVal)
@@ -387,10 +391,36 @@ substLocalNeutral i v (NProjField retTy r f) =
 substLocalNeutral _ _ (NPrim retTy p) = Left $ NPrim retTy p
 substLocalNeutral i v (NCase caseTy e valts) =
   case substLocalNeutral i v e of
-    Left e' -> Left $ NCase caseTy e' $ fmap (substLocal i v .) valts
+    Left e' -> Left $ NCase caseTy e' $ fmap (substBound i v .) valts
     Right e' -> Right $ evalCase caseTy e' valts
 
 data Eval deriving (Show, Eq, Ord, Generic)
+
+data EvalVars
+  = Quote !Int
+  | EvLocal !Int
+  deriving (Show, Eq, Ord, Generic)
+
+instance VarLike EvalVars where
+  varName (EvLocal i) = do
+    mtn <- preview $ #boundVars . ix i
+    case mtn of
+      Just (t, n) -> pure $ Just $ t <> if n > 0 then "_" <> T.pack (show n) else mempty
+      Nothing ->
+        pure $
+          Just $
+            "<<EvLocal: " <> T.pack (show i) <> ">>"
+  varName (Quote i) = pure $ Just $ "<<Quote:" <> tshow i <> ">>"
+
+type instance XName Eval = EvalVars
+
+type instance XGlobal Eval = NoExtField
+
+type instance XBound Eval = NoExtField
+
+type instance XPrimName Eval = NoExtField
+
+type instance Id Eval = Name Eval
 
 type instance XAnn Eval = Type
 
@@ -401,12 +431,6 @@ type instance AnnRHS Eval = Expr Eval
 type instance XStar Eval = NoExtField
 
 type instance XVar Eval = Type
-
-type instance Id Eval = FreeVar Eval
-
-type instance BoundVar Eval = Int
-
-type instance FreeVar Eval = Name
 
 type instance XApp Eval = Type
 
@@ -559,17 +583,4 @@ type instance CaseAltVarName Eval = AlphaName
 
 type instance CaseAltBody Eval = Expr Eval
 
-type instance XExpr Eval = XExprEval
-
-data XExprEval = BoundVar !Type !Int
-  deriving (Show, Eq, Ord, Generic)
-
-instance Pretty PrettyEnv XExprEval where
-  pretty (BoundVar _ i) = do
-    mtn <- preview $ #boundVars . ix i
-    bvar <- view $ #boundVars
-    case mtn of
-      Just (t, n)
-        | n > 0 -> PP.text t <> PP.char '_' <> PP.int n
-        | otherwise -> PP.text t
-      Nothing -> "<<Unbound:" <> pretty i <> "/" <> PP.string (show bvar) <> ">>"
+type instance XExpr Eval = NoExtCon

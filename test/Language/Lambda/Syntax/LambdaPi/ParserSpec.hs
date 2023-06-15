@@ -13,7 +13,6 @@ import Language.Lambda.Syntax.LambdaPi.Parser
 import Test.Tasty
 import Test.Tasty.HUnit
 
-
 inputCases :: [(String, Expr Parse)]
 inputCases =
   [ ("Nat : Type", Ann NoExtField nat star)
