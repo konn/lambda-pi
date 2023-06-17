@@ -12,7 +12,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -90,8 +89,6 @@ toInferable = \case
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toInferable b
   Nat NoExtField -> pure $ Nat NoExtField
-  Zero NoExtField -> pure $ Zero NoExtField
-  Succ NoExtField x -> Succ NoExtField <$> toCheckable x
   NatElim NoExtField t base step n ->
     NatElim NoExtField <$> toCheckable t <*> toCheckable base <*> toCheckable step <*> toCheckable n
   Vec NoExtField a n -> Vec NoExtField <$> toCheckable a <*> toCheckable n
@@ -152,8 +149,6 @@ toCheckable = \case
     Let NoExtField v <$> toInferable e <*> toCheckable b
       <|> fmap inf . Let NoExtField v <$> toInferable e <*> toInferable b
   Nat NoExtField -> pure $ inf $ Nat NoExtField
-  Zero NoExtField -> pure $ inf $ Zero NoExtField
-  Succ NoExtField x -> inf . Succ NoExtField <$> toCheckable x
   NatElim NoExtField t base step n ->
     fmap (fmap $ fmap inf) . NatElim NoExtField <$> toCheckable t <*> toCheckable base <*> toCheckable step <*> toCheckable n
   Vec NoExtField a n -> fmap inf . Vec NoExtField <$> toCheckable a <*> toCheckable n
@@ -403,8 +398,6 @@ typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c
 typeCheck _ _ (Pi c _ _ _) _ = noExtCon c
 typeCheck _ _ (Nat c) _ = noExtCon c
-typeCheck _ _ (Zero c) _ = noExtCon c
-typeCheck _ _ (Succ c _) _ = noExtCon c
 typeCheck _ _ (App c _ _) _ = noExtCon c
 typeCheck _ _ (NatElim c _ _ _ _) _ = noExtCon c
 typeCheck _ _ (Vec c _ _) _ = noExtCon c
@@ -489,15 +482,13 @@ typeInfer i ctx (Let NoExtField mv e b) = do
         (substBVar 0 (XName $ Local i) b)
   pure (ty, Let ty mv e' b')
 typeInfer _ _ Nat {} = pure (VStar, Nat NoExtField)
-typeInfer _ _ Zero {} = pure (VNat, Zero NoExtField)
-typeInfer i ctx (Succ NoExtField k) = (VNat,) . Succ NoExtField <$> typeCheck i ctx k VNat
 typeInfer i ctx (NatElim NoExtField m mz ms k) = do
   m' <- typeCheck i ctx m $ VPi (AlphaName "k") VNat $ const VStar
   let mVal = eval (toEvalContext ctx) m'
-  mz' <- typeCheck i ctx mz $ mVal @@ VZero
+  mz' <- typeCheck i ctx mz $ mVal @@ VNeutral (NFree VNat (PrimName NoExtField Zero))
   ms' <- typeCheck i ctx ms $
     VPi (AlphaName "l") VNat $ \l ->
-      VPi Anonymous (mVal @@ l) $ const $ mVal @@ VSucc l
+      VPi Anonymous (mVal @@ l) $ const $ mVal @@ (vSucc @@ l)
   k' <- typeCheck i ctx k VNat
   let kVal = eval (toEvalContext ctx) k'
       retTy = mVal @@ kVal
@@ -506,7 +497,7 @@ typeInfer i ctx (Vec NoExtField a k) =
   fmap (VStar,) . Vec NoExtField <$> typeCheck i ctx a VStar <*> typeCheck i ctx k VNat
 typeInfer i ctx (Nil NoExtField a) = do
   a' <- typeCheck i ctx a VStar
-  let retTy = VVec (eval (toEvalContext ctx) a') VZero
+  let retTy = VVec (eval (toEvalContext ctx) a') vZero
   pure (retTy, Nil NoExtField a')
 typeInfer i ctx (Cons NoExtField a n x xs) = do
   a' <- typeCheck i ctx a VStar
@@ -516,7 +507,7 @@ typeInfer i ctx (Cons NoExtField a n x xs) = do
       nVal = eval ctx' n'
   x' <- typeCheck i ctx x aVal
   xs' <- typeCheck i ctx xs $ VVec aVal nVal
-  pure (VVec aVal $ VSucc nVal, Cons NoExtField a' n' x' xs')
+  pure (VVec aVal $ vSucc @@ nVal, Cons NoExtField a' n' x' xs')
 typeInfer i ctx (VecElim NoExtField a m mnil mcons n vs) = do
   let ctx' = toEvalContext ctx
   a' <- typeCheck i ctx a VStar
@@ -527,14 +518,14 @@ typeInfer i ctx (VecElim NoExtField a m mnil mcons n vs) = do
   let !mVal = eval ctx' m'
   !mnil' <-
     typeCheck i ctx mnil $
-      vapps [mVal, VZero, VNil aVal]
+      vapps [mVal, vZero, VNil aVal]
   !mcons' <- typeCheck i ctx mcons $
     VPi (AlphaName "k") VNat $ \k ->
       VPi (AlphaName "y") aVal $ \y ->
         VPi (AlphaName "ys") (VVec aVal k) $ \ys ->
           VPi Anonymous (vapps [mVal, k, ys]) $
             const $
-              vapps [mVal, VSucc k, VCons aVal k y ys]
+              vapps [mVal, vSucc @@ k, VCons aVal k y ys]
   !n' <- typeCheck i ctx n VNat
   let !nVal = eval ctx' n'
   vs' <- typeCheck i ctx vs $ VVec aVal nVal
@@ -655,6 +646,8 @@ toEvalName (XName (Local v)) = XName (EvLocal v)
 inferPrim :: Prim -> Type
 inferPrim Tt = VNeutral $ NPrim VStar Unit
 inferPrim Unit = VStar
+inferPrim Zero = VNat
+inferPrim Succ = VPi Anonymous VNat (const VNat)
 
 substBVar :: forall m. KnownTypingMode m => Int -> Name Inferable -> Expr (Typing m) -> Expr (Typing m)
 substBVar !i r (Ann c e ty) = Ann c (substBVar i r e) (substBVar i r ty)
@@ -673,8 +666,6 @@ substBVar !i r (Pi c mv ann body) =
 substBVar !i r (Let NoExtField mv e b) =
   Let NoExtField mv (substBVar i r e) $ substBVar (i + 1) r b
 substBVar _ _ (Nat c) = Nat c
-substBVar _ _ (Zero c) = Zero c
-substBVar i r (Succ c n) = Succ c $ substBVar i r n
 substBVar i r (NatElim c t b ih n) =
   NatElim c (substBVar i r t) (substBVar i r b) (substBVar i r ih) (substBVar i r n)
 substBVar i r (Vec c a n) = Vec c (substBVar i r a) (substBVar i r n)
@@ -814,16 +805,6 @@ type instance LetBody (Typing e) = Expr (Typing e)
 type instance XNat Inferable = NoExtField
 
 type instance XNat Checkable = NoExtCon
-
-type instance XZero Inferable = NoExtField
-
-type instance XZero Checkable = NoExtCon
-
-type instance XSucc Inferable = NoExtField
-
-type instance XSucc Checkable = NoExtCon
-
-type instance SuccBody (Typing _) = Expr Checkable
 
 type instance XNatElim Inferable = NoExtField
 

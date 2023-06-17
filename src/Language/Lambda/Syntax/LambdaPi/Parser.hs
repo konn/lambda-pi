@@ -3,6 +3,7 @@
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -12,6 +13,7 @@ module Language.Lambda.Syntax.LambdaPi.Parser (
   -- * ASTs,
   Parse,
   ParsedExpr,
+  ParsedName (..),
 
   -- * Parsers
   exprP,
@@ -48,15 +50,18 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as Map
 import Data.Semigroup
 import Data.Semigroup.Foldable (fold1)
+import Data.String
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
+import RIO (tshow)
 import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhile1P, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import Text.Megaparsec.Char.Lexer qualified as L
+import Text.PrettyPrint.Monadic (Pretty (..))
 
 type Parser = Parsec Void Text
 
@@ -235,11 +240,17 @@ vecElim' =
             Pi NoExtField (DepNamed "x") (var "a") $
               Pi NoExtField (DepNamed "xs") (Vec NoExtField (var "a") (var "n")) $
                 Pi NoExtField Indep (apps [var "t", var "n", var "xs"]) $
-                  apps [var "t", Succ NoExtField (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
+                  apps [var "t", Succ' (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
       )
     $ Lam NoExtField "n" (Just nat)
     $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
     $ apps [var "t", var "n", var "xs"]
+
+pattern Succ' :: Expr Parse -> Expr Parse
+pattern Succ' e = App NoExtField (Prim Succ) e
+
+pattern Prim :: Prim -> Expr Parse
+pattern Prim p = Var NoExtField (Primitive p)
 
 apps :: [ParsedExpr] -> Expr Parse
 apps = foldl1' (App NoExtField)
@@ -248,7 +259,7 @@ dataConP :: Parser ParsedExpr
 dataConP =
   naturalP
     <|> Lam NoExtField "t" (Just star) (Nil NoExtField (var "t")) <$ reserved "nil"
-    <|> Zero NoExtField <$ reserved "zero"
+    <|> Prim Zero <$ reserved "zero"
     <|> Lam NoExtField "n" (Just nat) (succ' $ var "n") <$ reserved "succ"
     <|> cons' <$ reserved "cons"
     <|> recordP
@@ -275,7 +286,7 @@ cons' =
     $ Cons NoExtField (var "t") (var "n") (var "x") (var "xs")
 
 var :: Text -> ParsedExpr
-var = Var NoExtField
+var = Var NoExtField . Ident
 
 naturalP :: Parser ParsedExpr
 naturalP =
@@ -283,10 +294,10 @@ naturalP =
     foldr ($) zero (replicate n succ')
 
 succ' :: ParsedExpr -> ParsedExpr
-succ' = Succ NoExtField
+succ' = Succ'
 
 zero :: ParsedExpr
-zero = Zero NoExtField
+zero = Prim Zero
 
 nat :: Expr Parse
 nat = Nat NoExtField
@@ -338,7 +349,7 @@ vecCon' :: ParsedExpr
 vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
 
 varP :: Parser ParsedExpr
-varP = Var NoExtField <$> identifier
+varP = Var NoExtField . Ident <$> identifier
 
 primTypeP :: Parser ParsedExpr
 primTypeP =
@@ -442,7 +453,27 @@ type instance XStar Parse = NoExtField
 
 type instance XVar Parse = NoExtField
 
-type instance Id Parse = Text
+type instance Id Parse = ParsedName
+
+data ParsedName
+  = Ident !Text
+  | Primitive Prim
+  deriving (Show, Eq, Ord, Generic, Data)
+
+instance Pretty e ParsedName where
+  pretty (Ident t) = pretty t
+  pretty (Primitive p) = pretty p
+
+instance VarLike ParsedName where
+  varName (Ident t) = pure $ Just t
+  varName (Primitive p) = pure $ Just $ tshow $ pprint p
+
+instance IsString ParsedName where
+  fromString "succ" = Primitive Succ
+  fromString "zero" = Primitive Zero
+  fromString "Unit" = Primitive Unit
+  fromString "tt" = Primitive Tt
+  fromString ident = Ident $ T.pack ident
 
 type instance XApp Parse = NoExtField
 
@@ -475,12 +506,6 @@ type instance LetRHS Parse = Expr Parse
 type instance LetBody Parse = Expr Parse
 
 type instance XNat Parse = NoExtField
-
-type instance XZero Parse = NoExtField
-
-type instance XSucc Parse = NoExtField
-
-type instance SuccBody Parse = Expr Parse
 
 type instance XNatElim Parse = NoExtField
 

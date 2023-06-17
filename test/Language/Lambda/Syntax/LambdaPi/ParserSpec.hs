@@ -149,6 +149,9 @@ natElim' =
     $ Lam NoExtField "n" (Just nat)
     $ NatElim NoExtField (var "t") (var "base") (var "ind") (var "n")
 
+succ' :: ParsedExpr -> Expr Parse
+succ' = App NoExtField succCon
+
 vecElim' :: ParsedExpr
 vecElim' =
   Lam NoExtField "a" (Just star)
@@ -176,7 +179,7 @@ vecElim' =
             Pi NoExtField (DepNamed "x") (var "a") $
               Pi NoExtField (DepNamed "xs") (Vec NoExtField (var "a") (var "n")) $
                 Pi NoExtField Indep (apps [var "t", var "n", var "xs"]) $
-                  apps [var "t", Succ NoExtField (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
+                  apps [var "t", App NoExtField succCon (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
       )
     $ Lam NoExtField "n" (Just nat)
     $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
@@ -185,11 +188,11 @@ vecElim' =
 apps :: [ParsedExpr] -> Expr Parse
 apps = foldl1' (App NoExtField)
 
-succ' :: ParsedExpr -> ParsedExpr
-succ' = Succ NoExtField
+succCon :: ParsedExpr
+succCon = Var NoExtField $ Primitive Succ
 
 zero :: ParsedExpr
-zero = Zero NoExtField
+zero = Var NoExtField $ Primitive Zero
 
 nat :: Expr Parse
 nat = Nat NoExtField
@@ -217,4 +220,4 @@ vecNat5 :: Expr Parse
 vecNat5 = apps [vecCon', nat, succ' (succ' (succ' (succ' (succ' zero))))]
 
 var :: Text -> ParsedExpr
-var = Var NoExtField
+var = Var NoExtField . Ident

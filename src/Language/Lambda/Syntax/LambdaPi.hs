@@ -84,11 +84,6 @@ module Language.Lambda.Syntax.LambdaPi (
   -- *** Naturals
   XNat,
 
-  -- **** constructors
-  XZero,
-  XSucc,
-  SuccBody,
-
   -- **** eliminator
   XNatElim,
   NatElimRetFamily,
@@ -203,8 +198,6 @@ data Expr phase
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
   | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
   | Nat (XNat phase)
-  | Zero (XZero phase)
-  | Succ (XSucc phase) (SuccBody phase)
   | NatElim
       (XNatElim phase)
       (NatElimRetFamily phase)
@@ -275,8 +268,11 @@ deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
 instance Pretty e Prim where
   pretty Unit = "Unit"
   pretty Tt = "tt"
+  -- FIXME: Compress numerals
+  pretty Succ = "succ"
+  pretty Zero = "zero"
 
-data Prim = Unit | Tt
+data Prim = Unit | Tt | Succ | Zero
   deriving (Show, Eq, Ord, Generic, Data)
   deriving anyclass (Hashable)
 
@@ -372,12 +368,6 @@ type family LetRHS p
 type family LetBody p
 
 type family XNat p
-
-type family XZero p
-
-type family XSucc p
-
-type family SuccBody p
 
 type family XNatElim p
 
@@ -614,7 +604,6 @@ instance
   , VarLike (LetName phase)
   , Pretty PrettyEnv (LetRHS phase)
   , Pretty PrettyEnv (LetBody phase)
-  , Pretty PrettyEnv (SuccBody phase)
   , Pretty PrettyEnv (NatElimRetFamily phase)
   , Pretty PrettyEnv (NatElimBaseCase phase)
   , Pretty PrettyEnv (NatElimInductionStep phase)
@@ -704,10 +693,8 @@ instance
       [ "let" <+> text varN <+> "=" <+> pretty b
       , "in" <+> instantiate var (pretty e)
       ]
-  pretty Nat {} = text "ℕ"
-  pretty Zero {} = text "0"
   -- FIXME: compress numerals
-  pretty (Succ _ e) = text "succ" <@> pretty e
+  pretty Nat {} = text "ℕ"
   pretty (NatElim _ t b i n) =
     text "natElim" <@> pretty t <@> pretty b <@> pretty i <@> pretty n
   pretty (Vec _ a n) =

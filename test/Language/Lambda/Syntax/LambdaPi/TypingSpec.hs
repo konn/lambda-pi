@@ -7,13 +7,13 @@ module Language.Lambda.Syntax.LambdaPi.TypingSpec where
 import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Eval ((@@))
+import Language.Lambda.Syntax.LambdaPi.Eval (vSucc, vZero, (@@))
 import Language.Lambda.Syntax.LambdaPi.Parser
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
 import Test.Tasty
 import Test.Tasty.HUnit
-import Text.PrettyPrint (colon, parens, (<+>))
+import Text.PrettyPrint (parens)
 
 (~>) :: Type -> Type -> Type
 l ~> r = VPi Anonymous l (const r)
@@ -31,7 +31,7 @@ infCases =
     ( inf "λ(a: Type) (n: Nat). nil a"
     , VPi (AlphaName "z") VStar $ \z ->
         VPi (AlphaName "l") VNat $ \_ ->
-          VVec z VZero
+          VVec z vZero
     )
   ,
     ( inf "λ(t: Nat -> Type) (step: (Π(n: Nat). ((t n) -> t (succ n)))) (x: (t 0)). step 0 x"
@@ -39,20 +39,20 @@ infCases =
         VPi
           (AlphaName "succ")
           ( VPi (AlphaName "k") VNat $ \k ->
-              VPi Anonymous (f @@ k) (const $ f @@ VSucc k)
+              VPi Anonymous (f @@ k) (const $ f @@ (vSucc @@ k))
           )
           $ \_ ->
-            f @@ VSucc VZero
+            f @@ (vSucc @@ vZero)
     )
   ,
     ( inf "natElim"
     , VPi (AlphaName "f") (VNat ~> VStar) $ \f ->
-        VPi (AlphaName "f0") (f @@ VZero) $ \_ ->
+        VPi (AlphaName "f0") (f @@ vZero) $ \_ ->
           VPi
             (AlphaName "fsucc")
             ( VPi (AlphaName "l") VNat $ \l ->
                 VPi (AlphaName "fl") (f @@ l) $ \_ ->
-                  f @@ VSucc l
+                  f @@ (vSucc @@ l)
             )
             $ \_ ->
               VPi (AlphaName "m") VNat $ \n ->

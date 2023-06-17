@@ -35,7 +35,7 @@ import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Parser (Parse)
+import Language.Lambda.Syntax.LambdaPi.Parser (Parse, ParsedName (..))
 
 type RenamedExpr = Expr Rename
 
@@ -53,9 +53,8 @@ renameExpr = runRenamer . renameExprM
 
 renameExprM :: Expr Parse -> Renamer (Expr Rename)
 renameExprM = \case
-  Var NoExtField "tt" -> pure $ Var NoExtField $ PrimName NoExtField Tt
-  Var NoExtField "Unit" -> pure $ Var NoExtField $ PrimName NoExtField Unit
-  Var NoExtField v ->
+  Var NoExtField (Primitive p) -> pure $ Var NoExtField $ PrimName NoExtField p
+  Var NoExtField (Ident v) ->
     view (#boundVars . at v) <&> \case
       Just i -> Var NoExtField $ Bound NoExtField i
       Nothing -> Var NoExtField $ Global NoExtField v
@@ -81,8 +80,6 @@ renameExprM = \case
       <$> renameExprM e
       <*> abstract v (renameExprM body)
   Nat NoExtField -> pure $ Nat NoExtField
-  Zero NoExtField -> pure $ Zero NoExtField
-  Succ NoExtField n -> Succ NoExtField <$> renameExprM n
   NatElim NoExtField t base step n ->
     NatElim NoExtField
       <$> renameExprM t
@@ -188,12 +185,6 @@ type instance LetRHS Rename = Expr Rename
 type instance LetBody Rename = Expr Rename
 
 type instance XNat Rename = NoExtField
-
-type instance XZero Rename = NoExtField
-
-type instance XSucc Rename = NoExtField
-
-type instance SuccBody Rename = Expr Rename
 
 type instance XNatElim Rename = NoExtField
 

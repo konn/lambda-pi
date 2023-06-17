@@ -11,6 +11,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -32,6 +33,10 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   EvalVars (..),
   vapps,
   vfree,
+  nSucc,
+  nZero,
+  vSucc,
+  vZero,
 
   -- * ASTs
   quote,
@@ -64,8 +69,6 @@ data Value
   = VLam LambdaTypeSpec AlphaName (Value -> Value)
   | VStar
   | VNat
-  | VZero
-  | VSucc Value
   | VPi AlphaName Value (Value -> Value)
   | VVec Value Value
   | VNil Value
@@ -81,17 +84,27 @@ typeOf :: Value -> Type
 typeOf (VLam LambdaTypeSpec {..} x _) = VPi x lamArgType lamBodyType
 typeOf VStar = VStar
 typeOf VNat = VStar
-typeOf VZero = VNat
-typeOf VSucc {} = VPi Anonymous VNat (const VNat)
 typeOf VPi {} = VStar
 typeOf VVec {} = VStar
-typeOf (VNil a) = VVec a VZero
-typeOf (VCons a n _ _) = VVec a (VSucc n)
+typeOf (VNil a) = VVec a (VNeutral (NFree VNat (PrimName NoExtField Zero)))
+typeOf (VCons a n _ _) = VVec a (VNeutral nSucc @@ n)
 typeOf VRecord {} = VStar
 typeOf (VMkRecord fldTys _) = VRecord fldTys
 typeOf VVariant {} = VStar
 typeOf (VInj tags _ _) = VVariant tags
 typeOf (VNeutral n) = typeOfNeutral n
+
+nSucc :: Neutral
+nSucc = NFree (VPi Anonymous VNat (const VNat)) (PrimName NoExtField Succ)
+
+vSucc :: Value
+vSucc = VNeutral nSucc
+
+nZero :: Neutral
+nZero = NFree VNat $ PrimName NoExtField Zero
+
+vZero :: Value
+vZero = VNeutral $ NFree VNat $ PrimName NoExtField Zero
 
 instance Show Value where
   show = show . pprint . quote 0
@@ -147,8 +160,6 @@ quote i (VLam ls@LambdaTypeSpec {..} mv f) =
             Quote i
 quote _ VStar = Star NoExtField
 quote _ VNat = Nat NoExtField
-quote _ VZero = Zero NoExtField
-quote i (VSucc k) = Succ NoExtField $ quote i k
 quote i (VVec a n) = Vec NoExtField (quote i a) (quote i n)
 quote i (VNil a) = Nil NoExtField (quote i a)
 quote i (VCons a n x xs) =
@@ -234,8 +245,6 @@ eval ctx (Let _ _ e b) =
     (ctx & #boundValues %~ (eval ctx e <|))
     b
 eval _ Nat {} = VNat
-eval _ Zero {} = VZero
-eval ctx (Succ _ k) = VSucc $ eval ctx k
 eval ctx (NatElim retTy m mz ms k) =
   evalNatElim retTy (eval ctx m) (eval ctx mz) (eval ctx ms) (eval ctx k)
 eval ctx (Vec _ a n) = VVec (eval ctx a) (eval ctx n)
@@ -288,8 +297,8 @@ evalCase cinfo v0 alts = case v0 of
 evalNatElim :: Type -> Value -> Value -> Value -> Value -> Value
 evalNatElim retTy mVal mzVal msVal = fix $ \recur kVal ->
   case kVal of
-    VZero -> mzVal
-    VSucc l -> msVal @@ l @@ recur l
+    VNeutral (NFree _ (PrimName _ Zero)) -> mzVal
+    VNeutral (NApp _ (NFree _ (PrimName _ Succ)) l) -> msVal @@ l @@ recur l
     VNeutral nk ->
       VNeutral $
         NNatElim retTy mVal mzVal msVal nk
@@ -366,8 +375,6 @@ unsubstBVar i = flip runReader 0 . go
       Let <$> unsubstBVarValM i c <*> pure mn <*> go e <*> local (+ 1) (go v)
     go s@Star {} = pure s
     go s@Nat {} = pure s
-    go s@Zero {} = pure s
-    go (Succ NoExtField n) = Succ NoExtField <$> go n
     go (NatElim ty t t0 tsucc n) =
       NatElim
         <$> unsubstBVarValM i ty
@@ -445,8 +452,6 @@ unsubstBVarValM i = go
         <*> pure name
         <*> pure (flip runReader lvl . unsubstBVarValM i . f)
     go VNat = pure VNat
-    go VZero = pure VZero
-    go (VSucc e) = VSucc <$> go e
     go (VVec a n) = VVec <$> go a <*> go n
     go (VNil ty) = VNil <$> go ty
     go (VCons a n x xs) =
@@ -507,8 +512,6 @@ substLocal :: HasCallStack => Int -> Value -> Type -> Value
 substLocal i v (VLam lamTy mv f) = VLam (substLamSpec i v lamTy) mv $ substLocal i v . f
 substLocal _ _ VStar = VStar
 substLocal _ _ VNat = VNat
-substLocal _ _ VZero = VZero
-substLocal i v (VSucc va) = VSucc $ substLocal i v va
 substLocal i v (VPi mv va f) =
   VPi mv (substLocal i v va) $ substLocal i v . f
 substLocal i v (VNeutral neu) =
@@ -655,12 +658,6 @@ type instance LetRHS Eval = Expr Eval
 type instance LetBody Eval = Expr Eval
 
 type instance XNat Eval = NoExtField
-
-type instance XZero Eval = NoExtField
-
-type instance XSucc Eval = NoExtField
-
-type instance SuccBody Eval = Expr Eval
 
 type instance XNatElim Eval = Type
 
