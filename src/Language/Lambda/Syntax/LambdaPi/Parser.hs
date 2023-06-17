@@ -66,14 +66,14 @@ exprP :: Parser ParsedExpr
 exprP =
   makeExprParser
     termP
-    [
+    [ [Postfix fieldProjsP]
+    , [InfixL $ App NoExtField <$ appSpaceP]
+    , [InfixR $ Ann NoExtField <$ reservedOp ":"]
+    ,
       [ InfixR $
           Pi NoExtField Indep
             <$ (reservedOp "->" <|> reservedOp "→")
       ]
-    , [InfixR $ Ann NoExtField <$ reservedOp ":"]
-    , [InfixL $ App NoExtField <$ appSpaceP]
-    , [Postfix fieldProjsP]
     ]
 
 fieldProjsP :: Parser (ParsedExpr -> ParsedExpr)
