@@ -314,6 +314,9 @@ data NoExtField = NoExtField
 data NoExtCon
   deriving (Show, Eq, Ord, Generic, Data)
 
+instance VarLike NoExtCon where
+  varName = noExtCon
+
 noExtCon :: NoExtCon -> a
 noExtCon = \case {}
 

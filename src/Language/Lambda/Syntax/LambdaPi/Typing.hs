@@ -441,7 +441,7 @@ typeInfer !i ctx ex@(App NoExtField f x) = do
           <> show (pprint f, pprint ty)
           <> "; during evaluating "
           <> show (pprint ex)
-typeInfer i ctx l@(Lam NoExtField mv ty body) = do
+typeInfer i ctx (Lam NoExtField mv ty body) = do
   ty' <- typeCheck i ctx ty VStar
   let ctx' = toEvalContext ctx
       tyVal = eval ctx' ty'
@@ -454,7 +454,6 @@ typeInfer i ctx l@(Lam NoExtField mv ty body) = do
         (i + 1)
         (addLocal i tyVal ctx)
       $ substBVar 0 (XName $ Local i) body
-  () <- DT.trace ("SubstLocal " <> show i <> " (" <> show bodyTy <> "), evaling: " <> show (pprint l)) $ pure ()
   let lamRetTy v = substLocal i v bodyTy
       lamTy = VPi mv tyVal lamRetTy
   pure

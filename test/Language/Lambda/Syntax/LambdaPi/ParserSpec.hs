@@ -42,6 +42,29 @@ inputCases =
   , ("λ x. x", Lam NoExtField "x" Nothing (var "x"))
   , ("(λ x. x)", Lam NoExtField "x" Nothing (var "x"))
   ,
+    ( "λ(step: (Π(n: Nat). t n -> t (succ n))). step"
+    , Lam
+        NoExtField
+        "step"
+        ( Just $
+            Pi NoExtField (DepNamed "n") (Nat NoExtField) $
+              Pi
+                NoExtField
+                Indep
+                (App NoExtField (var "t") (var "n"))
+                ( App
+                    NoExtField
+                    (var "t")
+                    ( App
+                        NoExtField
+                        (Lam NoExtField "n" (Just nat) (succ' $ var "n"))
+                        (var "n")
+                    )
+                )
+        )
+        (Var NoExtField "step")
+    )
+  ,
     ( "{a: Nat, b: Nat -> Nat}"
     , Record NoExtField $ RecordFieldTypes [("a", nat), ("b", nat :~> nat)]
     )

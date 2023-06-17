@@ -33,6 +33,7 @@ library
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Eval
       Language.Lambda.Syntax.LambdaPi.Parser
+      Language.Lambda.Syntax.LambdaPi.QuasiQuotes
       Language.Lambda.Syntax.LambdaPi.Rename
       Language.Lambda.Syntax.LambdaPi.REPL
       Language.Lambda.Syntax.LambdaPi.Typing
@@ -78,6 +79,7 @@ library
     , semigroups
     , some
     , split
+    , template-haskell
     , text
     , these
     , transformers
@@ -130,6 +132,7 @@ executable lambda-pi-exe
     , semigroups
     , some
     , split
+    , template-haskell
     , text
     , these
     , transformers
@@ -144,6 +147,7 @@ test-suite lambda-pi-test
   other-modules:
       Language.Lambda.Syntax.LambdaPi.ParserSpec
       Language.Lambda.Syntax.LambdaPi.RenameSpec
+      Language.Lambda.Syntax.LambdaPi.TypingSpec
       Paths_lambda_pi
   hs-source-dirs:
       test
@@ -190,6 +194,7 @@ test-suite lambda-pi-test
     , tasty
     , tasty-hunit
     , tasty-quickcheck
+    , template-haskell
     , text
     , these
     , transformers
