@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 
 module Language.Lambda.Syntax.LambdaPi.TypingSpec where
 
@@ -14,6 +13,7 @@ import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
 import Test.Tasty
 import Test.Tasty.HUnit
+import Text.PrettyPrint (colon, parens, (<+>))
 
 (~>) :: Type -> Type -> Type
 l ~> r = VPi Anonymous l (const r)
@@ -21,7 +21,7 @@ l ~> r = VPi Anonymous l (const r)
 infCases :: [(Expr Inferable, Type)]
 infCases =
   [
-    ( inf "λ(a: Type) (x: a). a"
+    ( inf "λ(a: Type) (x: a). x"
     , VPi
         (AlphaName "x")
         VStar
@@ -56,7 +56,7 @@ test_typeInfer :: TestTree
 test_typeInfer =
   testGroup
     "typeInfer"
-    [ testCase (show $ pprint e) $
+    [ testCase (show $ parens (pprint e) <+> colon <+> parens (pprint ty)) $
       case typeInfer 0 mempty e of
         Left err -> assertFailure $ "Typing error: " <> err
         Right (ty0, _) -> ty0 @?= ty
