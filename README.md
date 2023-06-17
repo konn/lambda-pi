@@ -4,3 +4,8 @@ Based on ``[A Tutorial Implementation of a Dependently Typed Lambda Calculus][tu
 With small extension with inferrable annotated lambda term.
 
 [tutorial]: https://www.andres-loeh.de/LambdaPi/
+
+## Goals
+
+- Build an inconsistent dependently-typed programming language
+- Module system based on records
