@@ -57,7 +57,7 @@ inputCases =
                     (var "t")
                     ( App
                         NoExtField
-                        (Lam NoExtField "n" (Just nat) (succ' $ var "n"))
+                        (Var NoExtField $ Primitive Succ)
                         (var "n")
                     )
                 )
@@ -111,7 +111,7 @@ inputCases =
   ]
 
 succE :: Expr Parse
-succE = Lam NoExtField "n" (Just nat) (succ' $ var "n")
+succE = succCon
 
 test_exprP :: TestTree
 test_exprP =

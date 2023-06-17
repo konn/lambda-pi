@@ -260,7 +260,7 @@ dataConP =
   naturalP
     <|> Lam NoExtField "t" (Just star) (Nil NoExtField (var "t")) <$ reserved "nil"
     <|> Prim Zero <$ reserved "zero"
-    <|> Lam NoExtField "n" (Just nat) (succ' $ var "n") <$ reserved "succ"
+    <|> Prim Succ <$ reserved "succ"
     <|> cons' <$ reserved "cons"
     <|> recordP
     <|> varInjP
