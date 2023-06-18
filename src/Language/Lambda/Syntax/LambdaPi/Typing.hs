@@ -65,12 +65,12 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.These (These (..))
 import Data.Tuple (swap)
-import Debug.Trace qualified as DT
 import GHC.Generics (Generic)
 import GHC.Stack
 import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Eval
-import Language.Lambda.Syntax.LambdaPi.Rename (Rename)
+import Language.Lambda.Syntax.LambdaPi.Parser
+import Language.Lambda.Syntax.LambdaPi.Rename (Rename, renameExpr)
 import Text.PrettyPrint.Monadic (Pretty (..))
 
 toInferable :: Expr Rename -> Maybe (Expr Inferable)
@@ -280,7 +280,6 @@ typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
         (addLocal i ty ctx)
         (substBVar 0 (XName (Local i)) e)
         (ty' $ vfree ty $ XName (EvLocal i))
-  () <- DT.trace ("quote i: " <> show ty) $ pure ()
   pure $
     Lam
       LambdaTypeSpec
@@ -435,20 +434,19 @@ typeInfer !i ctx ex@(App NoExtField f x) = do
           <> "; during evaluating "
           <> show (pprint ex)
 typeInfer i ctx (Lam NoExtField mv ty body) = do
-  ty' <- typeCheck i ctx ty VStar
+  !ty' <- typeCheck i ctx ty VStar
   let ctx' = toEvalContext ctx
-      tyVal = eval ctx' ty'
-  (bodyTy, body') <-
-    fmap
-      -- Generally, the first mapping on returned type
-      -- is not needed due to eigenvariable condition.
-      (Bi.second $ unsubstBVar i)
-      $ typeInfer
+      !tyVal = eval ctx' ty'
+  (!bodyTy, !body') <-
+    -- Generally, the first mapping on returned type
+    -- is not needed due to eigenvariable condition.
+    Bi.bimap (unsubstBVarVal i) (unsubstBVar i)
+      <$> typeInfer
         (i + 1)
         (addLocal i tyVal ctx)
-      $ substBVar 0 (XName $ Local i) body
-  let lamRetTy v = substLocal i v bodyTy
-      lamTy = VPi mv tyVal lamRetTy
+        (substBVar 0 (XName $ Local i) body)
+  let lamRetTy v = substBound i v bodyTy
+      !lamTy = VPi mv tyVal lamRetTy
   pure
     ( lamTy
     , Lam
@@ -461,10 +459,10 @@ typeInfer i ctx (Lam NoExtField mv ty body) = do
         body'
     )
 typeInfer i ctx (Pi NoExtField mv arg ret) = do
-  arg' <- typeCheck i ctx arg VStar
+  !arg' <- typeCheck i ctx arg VStar
   let ctx' = toEvalContext ctx
-      t = eval ctx' arg'
-  ret' <-
+      !t = eval ctx' arg'
+  !ret' <-
     unsubstBVar i
       <$> typeCheck
         (i + 1)
@@ -473,9 +471,9 @@ typeInfer i ctx (Pi NoExtField mv arg ret) = do
         VStar
   pure (VStar, Pi NoExtField mv arg' ret')
 typeInfer i ctx (Let NoExtField mv e b) = do
-  (vty, e') <- typeInfer i ctx e
-  (ty, b') <-
-    Bi.second (unsubstBVar i)
+  (!vty, !e') <- typeInfer i ctx e
+  (!ty, !b') <-
+    Bi.bimap (unsubstBVarVal i) (unsubstBVar i)
       <$> typeInfer
         (i + 1)
         (addLocal i vty ctx)
@@ -917,3 +915,11 @@ deriving instance Ord (XExprTyping m)
 
 instance Pretty PrettyEnv (XExprTyping m) where
   pretty (Inf e) = pretty e
+
+debug :: Expr Eval
+debug =
+  either error snd $
+    maybe (error "h") (typeInfer 0 mempty) $
+      toInferable $
+        either (error "no") renameExpr $
+          parseOnly exprP "λ(t: Nat -> Type) (step: (Π(n: Nat). ((t n) -> t (succ n)))) (x: (t 0)). step 0 x"

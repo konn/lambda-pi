@@ -11,7 +11,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -28,7 +27,6 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   eval,
   unsubstBVar,
   unsubstBVarVal,
-  substLocal,
   LambdaTypeSpec (..),
   EvalVars (..),
   vapps,
@@ -42,6 +40,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   quote,
   Eval,
   CaseTypeInfo (..),
+  substBound,
 ) where
 
 import Control.Lens hiding (Context)
@@ -168,7 +167,7 @@ quote i (VPi mv v f) =
   Pi NoExtField mv (quote i v) $
     quote (i + 1) $
       f $
-        vfree VStar $
+        vfree v $
           XName $
             Quote i
 quote i (VNeutral n) = quoteNeutral i n
@@ -508,62 +507,61 @@ unsubstBoundNeutral i = go
               alts
           )
 
-substLocal :: HasCallStack => Int -> Value -> Type -> Value
-substLocal i v (VLam lamTy mv f) = VLam (substLamSpec i v lamTy) mv $ substLocal i v . f
-substLocal _ _ VStar = VStar
-substLocal _ _ VNat = VNat
-substLocal i v (VPi mv va f) =
-  VPi mv (substLocal i v va) $ substLocal i v . f
-substLocal i v (VNeutral neu) =
-  either VNeutral id $ substLocalNeutral i v neu
-substLocal i v (VVec va va') = VVec (substLocal i v va) (substLocal i v va')
-substLocal i v (VNil va) = VNil $ substLocal i v va
-substLocal i v (VCons va va' va2 va3) =
-  VCons (substLocal i v va) (substLocal i v va') (substLocal i v va2) (substLocal i v va3)
-substLocal i v (VRecord flds) = VRecord $ fmap (substLocal i v) flds
-substLocal i v (VMkRecord fldTy flds) = VMkRecord (substLocal i v <$> fldTy) $ substLocal i v <$> flds
-substLocal i v (VVariant flds) = VVariant $ fmap (substLocal i v) flds
-substLocal i v (VInj alts l e) = VInj (substLocal i v <$> alts) l $ substLocal i v e
+substBound :: HasCallStack => Int -> Value -> Type -> Value
+substBound i v (VLam lamTy mv f) = VLam (substBoundLamSpec i v lamTy) mv $ substBound i v . f
+substBound _ _ VStar = VStar
+substBound _ _ VNat = VNat
+substBound i v (VPi mv va f) =
+  VPi mv (substBound i v va) $ substBound i v . f
+substBound i v (VNeutral neu) =
+  either VNeutral id $ substBoundNeutral i v neu
+substBound i v (VVec va va') = VVec (substBound i v va) (substBound i v va')
+substBound i v (VNil va) = VNil $ substBound i v va
+substBound i v (VCons va va' va2 va3) =
+  VCons (substBound i v va) (substBound i v va') (substBound i v va2) (substBound i v va3)
+substBound i v (VRecord flds) = VRecord $ fmap (substBound i v) flds
+substBound i v (VMkRecord fldTy flds) = VMkRecord (substBound i v <$> fldTy) $ substBound i v <$> flds
+substBound i v (VVariant flds) = VVariant $ fmap (substBound i v) flds
+substBound i v (VInj alts l e) = VInj (substBound i v <$> alts) l $ substBound i v e
 
-substLamSpec :: Int -> Value -> LambdaTypeSpec -> LambdaTypeSpec
-substLamSpec i v l =
+substBoundLamSpec :: Int -> Value -> LambdaTypeSpec -> LambdaTypeSpec
+substBoundLamSpec i v l =
   LambdaTypeSpec
-    { lamArgType = substLocal i v $ lamArgType l
-    , lamBodyType = substLocal i v . lamBodyType l
+    { lamArgType = substBound i v $ lamArgType l
+    , lamBodyType = substBound i v . lamBodyType l
     }
 
-substLocalNeutral :: HasCallStack => Int -> Value -> Neutral -> Either Neutral Value
-substLocalNeutral i v (NFree _ (XName (EvLocal j)))
-  | i == j = Right v
-substLocalNeutral _ _ neu@NFree {} = Left neu
-substLocalNeutral i v (NApp retTy neu' va) =
-  let va' = substLocal i v va
+substBoundNeutral :: HasCallStack => Int -> Value -> Neutral -> Either Neutral Value
+substBoundNeutral i v (NFree _ (Bound _ j)) | i == j = Right v
+substBoundNeutral _ _ neu@NFree {} = Left neu
+substBoundNeutral i v (NApp retTy neu' va) =
+  let va' = substBound i v va
    in Bi.bimap (\vf' -> NApp retTy vf' va) (@@ va') $
-        substLocalNeutral i v neu'
-substLocalNeutral i v (NNatElim retTy f f0 fsucc neuK) =
-  let f' = substLocal i v f
-      f0' = substLocal i v f0
-      fsucc' = substLocal i v fsucc
+        substBoundNeutral i v neu'
+substBoundNeutral i v (NNatElim retTy f f0 fsucc neuK) =
+  let f' = substBound i v f
+      f0' = substBound i v f0
+      fsucc' = substBound i v fsucc
    in Bi.bimap (NNatElim retTy f' f0' fsucc') (evalNatElim retTy f' f0' fsucc') $
-        substLocalNeutral i v neuK
-substLocalNeutral i v (NVecElim retTy a f fnil fcons k kv) =
-  let aVal = substLocal i v a
-      fVal = substLocal i v f
-      fnilVal = substLocal i v fnil
-      fconsVal = substLocal i v fcons
-      kVal = substLocal i v k
+        substBoundNeutral i v neuK
+substBoundNeutral i v (NVecElim retTy a f fnil fcons k kv) =
+  let aVal = substBound i v a
+      fVal = substBound i v f
+      fnilVal = substBound i v fnil
+      fconsVal = substBound i v fcons
+      kVal = substBound i v k
    in Bi.bimap
         (NVecElim retTy aVal fVal fnilVal fconsVal kVal)
         (evalVecElim retTy aVal fVal fnilVal fconsVal kVal)
-        $ substLocalNeutral i v kv
-substLocalNeutral i v (NProjField retTy r f) =
-  case substLocalNeutral i v r of
+        $ substBoundNeutral i v kv
+substBoundNeutral i v (NProjField retTy r f) =
+  case substBoundNeutral i v r of
     Right rec -> Right $ evalProjField retTy f rec
     Left n -> Left $ NProjField retTy n f
-substLocalNeutral _ _ (NPrim retTy p) = Left $ NPrim retTy p
-substLocalNeutral i v (NCase caseTy e valts) =
-  case substLocalNeutral i v e of
-    Left e' -> Left $ NCase caseTy e' $ fmap (substLocal i v .) valts
+substBoundNeutral _ _ (NPrim retTy p) = Left $ NPrim retTy p
+substBoundNeutral i v (NCase caseTy e valts) =
+  case substBoundNeutral i v e of
+    Left e' -> Left $ NCase caseTy e' $ fmap (substBound i v .) valts
     Right e' -> Right $ evalCase caseTy e' valts
 
 data Eval deriving (Show, Eq, Ord, Generic, Data)
@@ -609,8 +607,8 @@ type instance AppRHS Eval = Expr Eval
 type instance XLam Eval = LambdaTypeSpec
 
 data LambdaTypeSpec = LambdaTypeSpec
-  { lamArgType :: Type
-  , lamBodyType :: Type -> Type
+  { lamArgType :: !Type
+  , lamBodyType :: !(Type -> Type)
   }
   deriving (Generic)
 
@@ -746,3 +744,6 @@ type instance CaseAltVarName Eval = AlphaName
 type instance CaseAltBody Eval = Expr Eval
 
 type instance XExpr Eval = NoExtCon
+
+instance Show Neutral where
+  show = show . quoteNeutral 0
