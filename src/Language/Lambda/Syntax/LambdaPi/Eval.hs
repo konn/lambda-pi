@@ -349,15 +349,12 @@ unsubstBVarVal = fmap (`runReader` 0) . unsubstBVarValM
 unsubstBVar :: Int -> Expr Eval -> Expr Eval
 unsubstBVar i = flip runReader 0 . go
   where
-    go v@(Var ty (XName (EvLocal j)))
-      | j == i = do
-          lvl <- ask
-          -- NOTE: This isn't needed if occurs check passed
-          ty' <- unsubstBVarValM i ty
-          pure $ Var ty' $ Bound NoExtField lvl
-      | otherwise = pure v
-    go (Var ty n) =
-      Var <$> unsubstBVarValM i ty <*> pure n
+    go (Var ty name) = do
+      -- NOTE: This isn't needed if occurs check passed
+      Var <$> unsubstBVarValM i ty <*> case name of
+        XName (EvLocal j)
+          | j == i -> asks $ Bound NoExtField
+        _ -> pure name
     go (Pi NoExtField mn l r) =
       Pi NoExtField mn
         <$> go l
