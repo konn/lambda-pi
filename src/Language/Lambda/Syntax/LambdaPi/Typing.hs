@@ -480,17 +480,17 @@ typeInfer i ctx (Let NoExtField mv e b) = do
         (substBVar 0 (XName $ Local i) b)
   pure (ty, Let ty mv e' b')
 typeInfer _ _ Nat {} = pure (VStar, Nat NoExtField)
-typeInfer i ctx (NatElim NoExtField m mz ms k) = do
-  m' <- typeCheck i ctx m $ VPi (AlphaName "k") VNat $ const VStar
-  let mVal = eval (toEvalContext ctx) m'
-  mz' <- typeCheck i ctx mz $ mVal @@ VNeutral (NFree VNat (PrimName NoExtField Zero))
-  ms' <- typeCheck i ctx ms $
+typeInfer i ctx (NatElim NoExtField t base step k) = do
+  t' <- typeCheck i ctx t $ VPi (AlphaName "k") VNat $ const VStar
+  let tVal = eval (toEvalContext ctx) t'
+  base' <- typeCheck i ctx base $ tVal @@ vZero
+  step' <- typeCheck i ctx step $
     VPi (AlphaName "l") VNat $ \l ->
-      VPi Anonymous (mVal @@ l) $ const $ mVal @@ (vSucc @@ l)
+      VPi Anonymous (tVal @@ l) $ const $ tVal @@ (vSucc @@ l)
   k' <- typeCheck i ctx k VNat
   let kVal = eval (toEvalContext ctx) k'
-      retTy = mVal @@ kVal
-  pure (retTy, NatElim retTy m' mz' ms' k')
+      retTy = tVal @@ kVal
+  pure (retTy, NatElim retTy t' base' step' k')
 typeInfer i ctx (Vec NoExtField a k) =
   fmap (VStar,) . Vec NoExtField <$> typeCheck i ctx a VStar <*> typeCheck i ctx k VNat
 typeInfer i ctx (Nil NoExtField a) = do
@@ -916,10 +916,10 @@ deriving instance Ord (XExprTyping m)
 instance Pretty PrettyEnv (XExprTyping m) where
   pretty (Inf e) = pretty e
 
-debug :: Expr Eval
+debug :: (Type, Expr Eval)
 debug =
-  either error snd $
+  either error id $
     maybe (error "h") (typeInfer 0 mempty) $
       toInferable $
         either (error "no") renameExpr $
-          parseOnly exprP "λ(t: Nat -> Type) (step: (Π(n: Nat). ((t n) -> t (succ n)))) (x: (t 0)). step 0 x"
+          parseOnly exprP "natElim"
