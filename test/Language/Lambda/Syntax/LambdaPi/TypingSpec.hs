@@ -34,15 +34,16 @@ infCases =
           VVec z vZero
     )
   ,
-    ( inf "λ(t: Nat -> Type) (step: (Π(n: Nat). ((t n) -> t (succ n)))) (x: (t 0)). step 0 x"
+    ( inf "λ(t: Nat -> Type) (step: Π(n: Nat). t n -> t (succ n)) (x: t 0). step 0 x"
     , VPi (AlphaName "f") (VPi Anonymous VNat $ const VStar) $ \f ->
         VPi
           (AlphaName "succ")
           ( VPi (AlphaName "k") VNat $ \k ->
               VPi Anonymous (f @@ k) (const $ f @@ (vSucc @@ k))
           )
-          $ \_ ->
-            f @@ (vSucc @@ vZero)
+          $ \_ -> VPi (AlphaName "base") (f @@ vZero) $
+            \_ ->
+              f @@ (vSucc @@ vZero)
     )
   ,
     ( inf "natElim"
