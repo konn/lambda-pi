@@ -356,9 +356,7 @@ unsubstBVar i = flip runReader 0 . go
           | j == i -> asks $ Bound NoExtField
         _ -> pure name
     go (Pi NoExtField mn l r) =
-      Pi NoExtField mn
-        <$> go l
-        <*> local (+ 1) (go r)
+      Pi NoExtField mn <$> go l <*> local (+ 1) (go r)
     go (Lam lamTy mn l r) =
       Lam
         <$> unsubstLamTy i lamTy
@@ -505,13 +503,14 @@ unsubstBoundNeutral i = go
           )
 
 substBound :: HasCallStack => Int -> Value -> Type -> Value
-substBound i v (VLam lamTy mv f) = VLam (substBoundLamSpec i v lamTy) mv $ substBound i v . f
+substBound i v (VLam lamTy mv f) =
+  VLam (substBoundLamSpec i v lamTy) mv $ substBound i v . f
 substBound _ _ VStar = VStar
 substBound _ _ VNat = VNat
 substBound i v (VPi mv va f) =
   VPi mv (substBound i v va) $ substBound i v . f
 substBound i v (VNeutral neu) =
-  either VNeutral id $ substBoundNeutral i v neu
+  either VNeutral (substBound i v) $ substBoundNeutral i v neu
 substBound i v (VVec va va') = VVec (substBound i v va) (substBound i v va')
 substBound i v (VNil va) = VNil $ substBound i v va
 substBound i v (VCons va va' va2 va3) =
@@ -530,36 +529,49 @@ substBoundLamSpec i v l =
 
 substBoundNeutral :: HasCallStack => Int -> Value -> Neutral -> Either Neutral Value
 substBoundNeutral i v (NFree _ (Bound _ j)) | i == j = Right v
-substBoundNeutral _ _ neu@NFree {} = Left neu
-substBoundNeutral i v (NApp retTy neu' va) =
+substBoundNeutral i v (NFree ty name) =
+  Left $ NFree (substBound i v ty) name
+substBoundNeutral i v (NApp retTy0 neu' va) =
   let va' = substBound i v va
+      retTy = substBound i v retTy0
    in Bi.bimap (\vf' -> NApp retTy vf' va) (@@ va') $
         substBoundNeutral i v neu'
-substBoundNeutral i v (NNatElim retTy f f0 fsucc neuK) =
+substBoundNeutral i v (NNatElim retTy0 f f0 fsucc neuK) =
   let f' = substBound i v f
       f0' = substBound i v f0
       fsucc' = substBound i v fsucc
+      retTy = substBound i v retTy0
    in Bi.bimap (NNatElim retTy f' f0' fsucc') (evalNatElim retTy f' f0' fsucc') $
         substBoundNeutral i v neuK
-substBoundNeutral i v (NVecElim retTy a f fnil fcons k kv) =
+substBoundNeutral i v (NVecElim retTy0 a f fnil fcons k kv) =
   let aVal = substBound i v a
       fVal = substBound i v f
       fnilVal = substBound i v fnil
       fconsVal = substBound i v fcons
       kVal = substBound i v k
+      retTy = substBound i v retTy0
    in Bi.bimap
         (NVecElim retTy aVal fVal fnilVal fconsVal kVal)
         (evalVecElim retTy aVal fVal fnilVal fconsVal kVal)
         $ substBoundNeutral i v kv
-substBoundNeutral i v (NProjField retTy r f) =
-  case substBoundNeutral i v r of
-    Right rec -> Right $ evalProjField retTy f rec
-    Left n -> Left $ NProjField retTy n f
-substBoundNeutral _ _ (NPrim retTy p) = Left $ NPrim retTy p
-substBoundNeutral i v (NCase caseTy e valts) =
-  case substBoundNeutral i v e of
-    Left e' -> Left $ NCase caseTy e' $ fmap (substBound i v .) valts
-    Right e' -> Right $ evalCase caseTy e' valts
+substBoundNeutral i v (NProjField retTy0 r f) =
+  let retTy = substBound i v retTy0
+   in case substBoundNeutral i v r of
+        Right rec -> Right $ evalProjField retTy f rec
+        Left n -> Left $ NProjField retTy n f
+substBoundNeutral i v (NPrim retTy p) = Left $ NPrim (substBound i v retTy) p
+substBoundNeutral i v (NCase caseTy0 e valts) =
+  let caseTy = substBoundCaseTy i v caseTy0
+   in case substBoundNeutral i v e of
+        Left e' -> Left $ NCase caseTy e' $ fmap (substBound i v .) valts
+        Right e' -> Right $ evalCase caseTy e' valts
+
+substBoundCaseTy :: Int -> Value -> CaseTypeInfo -> CaseTypeInfo
+substBoundCaseTy i v cinfo =
+  CaseTypeInfo
+    { caseRetTy = substBound i v $ caseRetTy cinfo
+    , caseAltArgs = substBound i v <$> caseAltArgs cinfo
+    }
 
 data Eval deriving (Show, Eq, Ord, Generic, Data)
 
