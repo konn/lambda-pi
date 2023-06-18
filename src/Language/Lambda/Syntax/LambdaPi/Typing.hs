@@ -287,7 +287,7 @@ typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
         , lamBodyType = ty'
         }
       v
-      (quote i ty)
+      (quote 0 ty)
       e'
 typeCheck _ _ lam@(Lam NoExtField _ _ _) ty =
   Left $
