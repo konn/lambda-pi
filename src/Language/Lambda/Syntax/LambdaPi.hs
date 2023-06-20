@@ -32,6 +32,8 @@ module Language.Lambda.Syntax.LambdaPi (
   XBound,
   XPrimName,
   Expr (..),
+  _Var,
+  _XName,
   XExpr,
 
   -- ** TTG types
@@ -226,6 +228,9 @@ data Expr phase
   | XExpr (XExpr phase)
   deriving (Generic)
 
+_Var :: Generic (Expr p) => Prism' (Expr p) (XVar p, Id p)
+_Var = #_Var
+
 deriving instance (Data p, FieldC Data (Expr p)) => Data (Expr p)
 
 -- | Names that has no effects for alpha-equivalence used only for the display purposes.
@@ -233,6 +238,7 @@ data AlphaName
   = AlphaName {runAlphaName :: Text}
   | Anonymous
   deriving (Show, Generic, Data)
+  deriving anyclass (NFData)
 
 instance VarLike AlphaName where
   varName (AlphaName t) = pure $ Just t
@@ -275,6 +281,7 @@ instance Pretty e Prim where
 data Prim = Unit | Tt | Succ | Zero
   deriving (Show, Eq, Ord, Generic, Data)
   deriving anyclass (Hashable)
+  deriving anyclass (NFData)
 
 instance Pretty e NoExtCon where
   pretty = noExtCon
@@ -285,6 +292,11 @@ data Name p
   | PrimName (XPrimName p) Prim
   | XName (XName p)
   deriving (Generic)
+
+_XName :: Prism' (Name p) (XName p)
+_XName = #_XName
+
+deriving anyclass instance FieldC NFData (Name p) => NFData (Name p)
 
 deriving instance (Data p, FieldC Data (Name p)) => Data (Name p)
 
@@ -306,9 +318,11 @@ type family XName p
 
 data NoExtField = NoExtField
   deriving (Show, Eq, Ord, Generic, Data)
+  deriving anyclass (NFData)
 
 data NoExtCon
   deriving (Show, Eq, Ord, Generic, Data)
+  deriving anyclass (NFData)
 
 instance VarLike NoExtCon where
   varName = noExtCon

@@ -440,7 +440,9 @@ typeInfer i ctx (Lam NoExtField mv ty body) = do
   (!bodyTy, !body') <-
     -- Generally, the first mapping on returned type
     -- is not needed due to eigenvariable condition.
-    Bi.bimap (unsubstBVarVal i) (unsubstBVar i)
+    Bi.bimap
+      (unsubstBVarVal i)
+      (unsubstBVar i)
       <$> typeInfer
         (i + 1)
         (addLocal i tyVal ctx)

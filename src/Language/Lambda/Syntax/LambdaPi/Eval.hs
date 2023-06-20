@@ -1,6 +1,7 @@
 {-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyDataDeriving #-}
@@ -61,7 +62,7 @@ import Data.Text qualified as T
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Language.Lambda.Syntax.LambdaPi
-import RIO (tshow)
+import RIO (NFData (..), deepseq, tshow)
 import Text.PrettyPrint.Monadic (Pretty (..))
 
 data Value
@@ -78,6 +79,26 @@ data Value
   | VInj (HashMap Text Type) Text Value
   | VNeutral Neutral
   deriving (Generic)
+
+instance NFData LambdaTypeSpec where
+  rnf LambdaTypeSpec {..} = rnf lamArgType `seq` rnfTyFun lamBodyType
+
+rnfTyFun :: (Type -> Type) -> ()
+rnfTyFun f = f `seq` f VStar `seq` ()
+
+instance NFData Value where
+  rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun b
+  rnf (VPi lts a b) = lts `deepseq` a `deepseq` rnfTyFun b
+  rnf VStar = ()
+  rnf VNat = ()
+  rnf (VVec a n) = a `deepseq` rnf n
+  rnf (VNil a) = rnf a
+  rnf (VCons a n x xs) = a `deepseq` n `deepseq` x `deepseq` rnf xs
+  rnf (VRecord flds) = rnf flds
+  rnf (VMkRecord fldTys flds) = fldTys `deepseq` rnf flds
+  rnf (VVariant tags) = rnf tags
+  rnf (VInj alts l tag) = alts `deepseq` l `deepseq` rnf tag
+  rnf (VNeutral n) = rnf n
 
 typeOf :: Value -> Type
 typeOf (VLam LambdaTypeSpec {..} x _) = VPi x lamArgType lamBodyType
@@ -121,6 +142,17 @@ data Neutral
   | NCase CaseTypeInfo Neutral (HM.HashMap Text (Value -> Value))
   -- FIXME: Work out what NOpen should be
   deriving (Generic)
+
+instance NFData Neutral where
+  rnf (NFree ty n) = ty `deepseq` rnf n
+  rnf (NPrim ty n) = ty `deepseq` rnf n
+  rnf (NApp ty l r) = ty `deepseq` l `deepseq` rnf r
+  rnf (NNatElim ty t b i n) =
+    ty `deepseq` t `deepseq` b `deepseq` i `deepseq` rnf n
+  rnf (NVecElim ty a t b i n xs) =
+    ty `deepseq` a `deepseq` t `deepseq` b `deepseq` i `deepseq` n `deepseq` rnf xs
+  rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
+  rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap rnfTyFun xs)
 
 typeOfNeutral :: Neutral -> Type
 typeOfNeutral (NFree retTy _) = retTy
@@ -428,7 +460,10 @@ unsubstLamTy i LambdaTypeSpec {..} = do
   lvl <- ask
   LambdaTypeSpec
     <$> unsubstBVarValM i lamArgType
-    <*> pure (flip runReader lvl . unsubstBVarValM i . lamBodyType)
+    <*> pure (flip runReader (lvl + 1) . unsubstBVarValM i . lamBodyType)
+
+unsubstBVarValToM :: Int -> Int -> Value -> Value
+unsubstBVarValToM lvl i v = runReader (unsubstBVarValM i v) lvl
 
 unsubstBVarValM :: Int -> Value -> Reader Int Value
 unsubstBVarValM i = go
@@ -438,13 +473,13 @@ unsubstBVarValM i = go
       lvl <- ask
       VPi mv
         <$> unsubstBVarValM i argTy
-        <*> pure (flip runReader lvl . unsubstBVarValM i . f)
+        <*> pure (unsubstBVarValToM (lvl + 1) i . f)
     go (VLam lt name f) = do
       lvl <- ask
       VLam
         <$> unsubstLamTy i lt
         <*> pure name
-        <*> pure (flip runReader lvl . unsubstBVarValM i . f)
+        <*> pure (unsubstBVarValToM (lvl + 1) i . f)
     go VNat = pure VNat
     go (VVec a n) = VVec <$> go a <*> go n
     go (VNil ty) = VNil <$> go ty
@@ -579,6 +614,7 @@ data EvalVars
   = Quote !Int
   | EvLocal !Int
   deriving (Show, Eq, Ord, Generic, Data)
+  deriving anyclass (NFData)
 
 instance VarLike EvalVars where
   varName (EvLocal i) =
@@ -741,6 +777,7 @@ data CaseTypeInfo = CaseTypeInfo
   , caseAltArgs :: HM.HashMap Text Type
   }
   deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (NFData)
 
 type instance XCase Eval = CaseTypeInfo
 
