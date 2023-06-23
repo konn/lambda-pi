@@ -86,13 +86,6 @@ module Language.Lambda.Syntax.LambdaPi (
   -- *** Naturals
   XNat,
 
-  -- **** eliminator
-  XNatElim,
-  NatElimRetFamily,
-  NatElimBaseCase,
-  NatElimInductionStep,
-  NatElimInput,
-
   -- *** Vectors
   XVec,
   VecType,
@@ -200,12 +193,6 @@ data Expr phase
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
   | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
   | Nat (XNat phase)
-  | NatElim
-      (XNatElim phase)
-      (NatElimRetFamily phase)
-      (NatElimBaseCase phase)
-      (NatElimInductionStep phase)
-      (NatElimInput phase)
   | Vec (XVec phase) (VecType phase) (VecLength phase)
   | Nil (XNil phase) (NilType phase)
   | Cons (XCons phase) (ConsType phase) (ConsLength phase) (ConsHead phase) (ConsTail phase)
@@ -274,11 +261,12 @@ deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
 instance Pretty e Prim where
   pretty Unit = "Unit"
   pretty Tt = "tt"
+  pretty NatElim = "natElim"
   -- FIXME: Compress numerals
   pretty Succ = "succ"
   pretty Zero = "zero"
 
-data Prim = Unit | Tt | Succ | Zero
+data Prim = Unit | Tt | Succ | Zero | NatElim
   deriving (Show, Eq, Ord, Generic, Data)
   deriving anyclass (Hashable)
   deriving anyclass (NFData)
@@ -382,16 +370,6 @@ type family LetRHS p
 type family LetBody p
 
 type family XNat p
-
-type family XNatElim p
-
-type family NatElimRetFamily a
-
-type family NatElimBaseCase a
-
-type family NatElimInductionStep a
-
-type family NatElimInput a
 
 type family XVec p
 
@@ -618,10 +596,6 @@ instance
   , VarLike (LetName phase)
   , Pretty PrettyEnv (LetRHS phase)
   , Pretty PrettyEnv (LetBody phase)
-  , Pretty PrettyEnv (NatElimRetFamily phase)
-  , Pretty PrettyEnv (NatElimBaseCase phase)
-  , Pretty PrettyEnv (NatElimInductionStep phase)
-  , Pretty PrettyEnv (NatElimInput phase)
   , Pretty PrettyEnv (VecType phase)
   , Pretty PrettyEnv (VecLength phase)
   , Pretty PrettyEnv (NilType phase)
@@ -709,8 +683,6 @@ instance
       ]
   -- FIXME: compress numerals
   pretty Nat {} = text "ℕ"
-  pretty (NatElim _ t b i n) =
-    text "natElim" <@> pretty t <@> pretty b <@> pretty i <@> pretty n
   pretty (Vec _ a n) =
     text "Vec" <@> pretty a <@> pretty n
   pretty (Nil _ a) =

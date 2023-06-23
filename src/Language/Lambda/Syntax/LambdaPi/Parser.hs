@@ -185,33 +185,9 @@ annBinder =
 
 eliminatorsP :: Parser ParsedExpr
 eliminatorsP =
-  natElim' <$ reserved "natElim"
+  Prim NatElim <$ reserved "natElim"
     <|> vecElim' <$ reserved "vecElim"
     <|> try openP
-
-natElim' :: ParsedExpr
-natElim' =
-  Lam NoExtField "t" (Just (Pi NoExtField Indep nat star))
-    $ Lam NoExtField "base" (Just (App NoExtField (var "t") zero))
-    $ Lam
-      NoExtField
-      "ind"
-      ( Just
-          ( Pi
-              NoExtField
-              (DepNamed "k")
-              nat
-              ( Pi
-                  NoExtField
-                  Indep
-                  (App NoExtField (var "t") (var "k"))
-                  $ App NoExtField (var "t")
-                  $ succ' (var "k")
-              )
-          )
-      )
-    $ Lam NoExtField "n" (Just nat)
-    $ NatElim NoExtField (var "t") (var "base") (var "ind") (var "n")
 
 vecElim' :: ParsedExpr
 vecElim' =
@@ -506,16 +482,6 @@ type instance LetRHS Parse = Expr Parse
 type instance LetBody Parse = Expr Parse
 
 type instance XNat Parse = NoExtField
-
-type instance XNatElim Parse = NoExtField
-
-type instance NatElimRetFamily Parse = Expr Parse
-
-type instance NatElimBaseCase Parse = Expr Parse
-
-type instance NatElimInductionStep Parse = Expr Parse
-
-type instance NatElimInput Parse = Expr Parse
 
 type instance XVec Parse = NoExtField
 

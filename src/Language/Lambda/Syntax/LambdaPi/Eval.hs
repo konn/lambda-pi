@@ -12,6 +12,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -42,6 +43,8 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   Eval,
   CaseTypeInfo (..),
   substBound,
+  inferPrim,
+  evalNatElim,
 ) where
 
 import Control.Lens hiding (Context)
@@ -136,7 +139,6 @@ data Neutral
   = NFree Type (Name Eval)
   | NPrim Type Prim
   | NApp Type Neutral Value
-  | NNatElim Type Value Value Value Neutral
   | NVecElim Type Value Value Value Value Value Neutral
   | NProjField Type Neutral Text
   | NCase CaseTypeInfo Neutral (HM.HashMap Text (Value -> Value))
@@ -147,18 +149,22 @@ instance NFData Neutral where
   rnf (NFree ty n) = ty `deepseq` rnf n
   rnf (NPrim ty n) = ty `deepseq` rnf n
   rnf (NApp ty l r) = ty `deepseq` l `deepseq` rnf r
-  rnf (NNatElim ty t b i n) =
-    ty `deepseq` t `deepseq` b `deepseq` i `deepseq` rnf n
   rnf (NVecElim ty a t b i n xs) =
     ty `deepseq` a `deepseq` t `deepseq` b `deepseq` i `deepseq` n `deepseq` rnf xs
   rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
   rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap rnfTyFun xs)
 
+inferPrim :: Prim -> Type
+inferPrim Tt = VNeutral $ NPrim VStar Unit
+inferPrim Unit = VStar
+inferPrim Zero = VNat
+inferPrim Succ = VPi Anonymous VNat (const VNat)
+inferPrim NatElim = natElimType
+
 typeOfNeutral :: Neutral -> Type
 typeOfNeutral (NFree retTy _) = retTy
 typeOfNeutral (NPrim retTy _) = retTy
 typeOfNeutral (NApp retTy _ _) = retTy
-typeOfNeutral (NNatElim retTy _ _ _ _) = retTy
 typeOfNeutral (NVecElim retTy _ _ _ _ _ _) = retTy
 typeOfNeutral (NProjField retTy _ _) = retTy
 typeOfNeutral (NCase CaseTypeInfo {..} _ _) = caseRetTy
@@ -224,9 +230,6 @@ quote i (VInj alts l e) =
 quoteNeutral :: Int -> Neutral -> Expr Eval
 quoteNeutral i (NFree ty x) = boundFree ty i x
 quoteNeutral i (NApp ty n v) = App ty (quoteNeutral i n) (quote i v)
-quoteNeutral i (NNatElim ty m mz ms k) =
-  NatElim ty (quote i m) (quote i mz) (quote i ms) $
-    quoteNeutral i k
 quoteNeutral i (NVecElim ty a m mz ms k xs) =
   VecElim ty (quote i a) (quote i m) (quote i mz) (quote i ms) (quote i k) $
     quoteNeutral i xs
@@ -276,8 +279,6 @@ eval ctx (Let _ _ e b) =
     (ctx & #boundValues %~ (eval ctx e <|))
     b
 eval _ Nat {} = VNat
-eval ctx (NatElim retTy m mz ms k) =
-  evalNatElim retTy (eval ctx m) (eval ctx mz) (eval ctx ms) (eval ctx k)
 eval ctx (Vec _ a n) = VVec (eval ctx a) (eval ctx n)
 eval ctx (Nil _ a) = VNil $ eval ctx a
 eval ctx (Cons _ a k v vk) =
@@ -294,11 +295,6 @@ eval ctx (Open _ rcd bdy) =
     VMkRecord _ flds ->
       let ctx' = ctx & #namedBinds %~ (flds <>)
        in eval ctx' bdy
-    -- FIXME: Work out what NOpen should be
-    {-
-    VNeutral v -> ...
-    VNeutralChk (Inf v) -> ...
-    -}
     otr ->
       error $
         "Impossible: open requires a record, but got a term of type: "
@@ -325,15 +321,32 @@ evalCase cinfo v0 alts = case v0 of
   VNeutral v -> VNeutral $ NCase cinfo v alts
   v -> error $ "Impossible: neither inj or neutral term given as a scrutinee of case-expression: " <> show (pprint v)
 
-evalNatElim :: Type -> Value -> Value -> Value -> Value -> Value
-evalNatElim retTy mVal mzVal msVal = fix $ \recur kVal ->
+evalNatElim :: Value -> Value -> Value -> Value -> Value
+evalNatElim t t0 tStep = fix $ \recur kVal ->
   case kVal of
-    VNeutral (NFree _ (PrimName _ Zero)) -> mzVal
-    VNeutral (NApp _ (NFree _ (PrimName _ Succ)) l) -> msVal @@ l @@ recur l
+    VNeutral (NFree _ (PrimName _ Zero)) -> t0
+    VNeutral (NApp _ (NFree _ (PrimName _ Succ)) l) -> tStep @@ l @@ recur l
     VNeutral nk ->
-      VNeutral $
-        NNatElim retTy mVal mzVal msVal nk
+      ( vfree natElimType (PrimName NoExtField NatElim)
+          @@ t
+          @@ t0
+          @@ tStep
+      )
+        @@ VNeutral nk
     _ -> error "internal: eval natElim failed!"
+
+natElimType :: Type
+natElimType =
+  VPi (AlphaName "t") (VPi Anonymous VNat $ const VStar) $ \t ->
+    VPi (AlphaName "base") (t @@ vZero) $ \_base ->
+      VPi
+        (AlphaName "step")
+        ( VPi (AlphaName "l") VNat $ \l ->
+            VPi (AlphaName "tl") (t @@ l) $ \_tl ->
+              t @@ (vSucc @@ l)
+        )
+        $ \_step ->
+          VPi (AlphaName "k") VNat $ \k -> t @@ k
 
 evalVecElim :: Type -> Value -> Value -> Value -> Value -> Value -> Value -> Value
 evalVecElim retTy aVal mVal mnilVal mconsVal =
@@ -363,10 +376,17 @@ evalProjField retTy f =
         "Impossible: non-evaulable record field projection: "
           <> show (f, pprint v)
 
-infixl 9 @@
+infixl 9 @@, :@
+
+pattern (:@) :: Neutral -> Value -> Neutral
+pattern l :@ r <- NApp _ l r
+
+pattern P :: Prim -> Neutral
+pattern P p <- NFree _ (PrimName _ p)
 
 (@@) :: HasCallStack => Value -> Value -> Value
 VLam _ _ f @@ r = f r
+VNeutral (P NatElim :@ t :@ base :@ ind) @@ n = evalNatElim t base ind n
 VNeutral neu @@ r
   | VPi _ _ f <- typeOfNeutral neu =
       VNeutral $ NApp (f $ typeOf r) neu r
@@ -401,13 +421,6 @@ unsubstBVar i = flip runReader 0 . go
       Let <$> unsubstBVarValM i c <*> pure mn <*> go e <*> local (+ 1) (go v)
     go s@Star {} = pure s
     go s@Nat {} = pure s
-    go (NatElim ty t t0 tsucc n) =
-      NatElim
-        <$> unsubstBVarValM i ty
-        <*> go t
-        <*> go t0
-        <*> go tsucc
-        <*> go n
     go (Vec NoExtField x n) =
       Vec NoExtField <$> go x <*> go n
     go (Nil NoExtField c) = Nil NoExtField <$> go c
@@ -508,13 +521,6 @@ unsubstBoundNeutral i = go
         <$> unsubstBVarValM i ty
         <*> go l
         <*> unsubstBVarValM i v
-    go (NNatElim ty t t0 tsucc n) =
-      NNatElim
-        <$> unsubstBVarValM i ty
-        <*> unsubstBVarValM i t
-        <*> unsubstBVarValM i t0
-        <*> unsubstBVarValM i tsucc
-        <*> go n
     go (NVecElim ty x t t0 tsucc n xs) =
       NVecElim
         <$> unsubstBVarValM i ty
@@ -571,13 +577,6 @@ substBoundNeutral i v (NApp retTy0 neu' va) =
       retTy = substBound i v retTy0
    in Bi.bimap (\vf' -> NApp retTy vf' va) (@@ va') $
         substBoundNeutral i v neu'
-substBoundNeutral i v (NNatElim retTy0 f f0 fsucc neuK) =
-  let f' = substBound i v f
-      f0' = substBound i v f0
-      fsucc' = substBound i v fsucc
-      retTy = substBound i v retTy0
-   in Bi.bimap (NNatElim retTy f' f0' fsucc') (evalNatElim retTy f' f0' fsucc') $
-        substBoundNeutral i v neuK
 substBoundNeutral i v (NVecElim retTy0 a f fnil fcons k kv) =
   let aVal = substBound i v a
       fVal = substBound i v f
@@ -701,16 +700,6 @@ type instance LetRHS Eval = Expr Eval
 type instance LetBody Eval = Expr Eval
 
 type instance XNat Eval = NoExtField
-
-type instance XNatElim Eval = Type
-
-type instance NatElimRetFamily Eval = Expr Eval
-
-type instance NatElimBaseCase Eval = Expr Eval
-
-type instance NatElimInductionStep Eval = Expr Eval
-
-type instance NatElimInput Eval = Expr Eval
 
 type instance XVec Eval = NoExtField
 

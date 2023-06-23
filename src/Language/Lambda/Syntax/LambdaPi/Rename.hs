@@ -80,12 +80,6 @@ renameExprM = \case
       <$> renameExprM e
       <*> abstract v (renameExprM body)
   Nat NoExtField -> pure $ Nat NoExtField
-  NatElim NoExtField t base step n ->
-    NatElim NoExtField
-      <$> renameExprM t
-      <*> renameExprM base
-      <*> renameExprM step
-      <*> renameExprM n
   Vec NoExtField x n -> Vec NoExtField <$> renameExprM x <*> renameExprM n
   Nil NoExtField x -> Nil NoExtField <$> renameExprM x
   Cons NoExtField t n x xs ->
@@ -185,16 +179,6 @@ type instance LetRHS Rename = Expr Rename
 type instance LetBody Rename = Expr Rename
 
 type instance XNat Rename = NoExtField
-
-type instance XNatElim Rename = NoExtField
-
-type instance NatElimRetFamily Rename = Expr Rename
-
-type instance NatElimBaseCase Rename = Expr Rename
-
-type instance NatElimInductionStep Rename = Expr Rename
-
-type instance NatElimInput Rename = Expr Rename
 
 type instance XVec Rename = NoExtField
 
