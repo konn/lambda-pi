@@ -145,6 +145,7 @@ test-suite lambda-pi-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      Language.Lambda.Syntax.LambdaPi.EvalSpec
       Language.Lambda.Syntax.LambdaPi.ParserSpec
       Language.Lambda.Syntax.LambdaPi.RenameSpec
       Language.Lambda.Syntax.LambdaPi.TypingSpec

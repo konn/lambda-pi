@@ -59,6 +59,20 @@ infCases =
               VPi (AlphaName "m") VNat $ \n ->
                 f @@ n
     )
+  ,
+    ( inf "λ (t: Nat -> Type) (base: t 0) (step : Π(n : Nat). t n -> t (succ n)) (k : Nat). natElim t base step k"
+    , VPi (AlphaName "f") (VNat ~> VStar) $ \f ->
+        VPi (AlphaName "f0") (f @@ vZero) $ \_ ->
+          VPi
+            (AlphaName "fsucc")
+            ( VPi (AlphaName "l") VNat $ \l ->
+                VPi (AlphaName "fl") (f @@ l) $ \_ ->
+                  f @@ (vSucc @@ l)
+            )
+            $ \_ ->
+              VPi (AlphaName "m") VNat $ \n ->
+                f @@ n
+    )
   ]
 
 inf :: Text -> Expr Inferable

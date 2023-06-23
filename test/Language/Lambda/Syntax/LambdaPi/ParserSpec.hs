@@ -126,28 +126,7 @@ test_exprP =
     ]
 
 natElim' :: ParsedExpr
-natElim' =
-  Lam NoExtField "t" (Just (Pi NoExtField Indep nat star))
-    $ Lam NoExtField "base" (Just (App NoExtField (var "t") zero))
-    $ Lam
-      NoExtField
-      "ind"
-      ( Just
-          ( Pi
-              NoExtField
-              (DepNamed "k")
-              nat
-              ( Pi
-                  NoExtField
-                  Indep
-                  (App NoExtField (var "t") (var "k"))
-                  $ App NoExtField (var "t")
-                  $ succ' (var "k")
-              )
-          )
-      )
-    $ Lam NoExtField "n" (Just nat)
-    $ NatElim NoExtField (var "t") (var "base") (var "ind") (var "n")
+natElim' = Var NoExtField $ Primitive NatElim
 
 succ' :: ParsedExpr -> Expr Parse
 succ' = App NoExtField succCon
