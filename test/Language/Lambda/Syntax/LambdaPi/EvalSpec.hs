@@ -38,7 +38,9 @@ test_eval :: TestTree
 test_eval =
   testGroup
     "eval"
-    [ testCase (show $ parens (pprint e)) $
+    [ testCaseSteps (show $ parens (pprint e)) $ \step -> do
+      step $ "typed term: " <> show e
+      step "eval"
       eval mempty e @?= val
     | (e, val) <- evalCases
     ]
