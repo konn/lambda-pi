@@ -154,7 +154,7 @@ instance NFData Neutral where
   rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
   rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap rnfTyFun xs)
 
-inferPrim :: Prim -> Type
+inferPrim :: HasCallStack => Prim -> Type
 inferPrim Tt = VNeutral $ NPrim VStar Unit
 inferPrim Unit = VStar
 inferPrim Zero = VNat
@@ -335,7 +335,7 @@ evalNatElim t t0 tStep = fix $ \recur kVal ->
         @@ VNeutral nk
     _ -> error "internal: eval natElim failed!"
 
-natElimType :: Type
+natElimType :: HasCallStack => Type
 natElimType =
   VPi (AlphaName "t") (VPi Anonymous VNat $ const VStar) $ \t ->
     VPi (AlphaName "base") (t @@ vZero) $ \_base ->

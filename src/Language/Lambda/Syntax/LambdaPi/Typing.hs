@@ -442,7 +442,7 @@ typeInfer i ctx (Lam NoExtField mv ty body) = do
         (i + 1)
         (addLocal i tyVal ctx)
         (substBVar 0 (XName $ Local i) body)
-  let lamRetTy v = substBound i v bodyTy
+  let lamRetTy v = substBound 0 v bodyTy
       !lamTy = VPi mv tyVal lamRetTy
   pure
     ( lamTy

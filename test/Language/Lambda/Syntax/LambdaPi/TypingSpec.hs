@@ -33,6 +33,7 @@ infCases =
         VPi (AlphaName "l") VNat $ \_ ->
           VVec z vZero
     )
+  , (inf "natElim (λ n. ℕ) 3 (λ k. succ) 2", VNat)
   ,
     ( inf "λ(t: Nat -> Type) (step: Π(n: Nat). t n -> t (succ n)) (x: t 0). step 0 x"
     , VPi (AlphaName "f") (VPi Anonymous VNat $ const VStar) $ \f ->
@@ -86,5 +87,16 @@ test_typeInfer =
       case typeInfer 0 mempty e of
         Left err -> assertFailure $ "Typing error: " <> err
         Right (ty0, _) -> ty0 @?= ty
+    | (e, ty) <- infCases
+    ]
+
+test_typeCheck :: TestTree
+test_typeCheck =
+  testGroup
+    "typeCheck"
+    [ testCase (show $ parens (pprint e)) $
+      case typeCheck 0 mempty (XExpr $ Inf e) ty of
+        Left err -> assertFailure $ "Typing error: " <> err
+        Right _ev' -> pure ()
     | (e, ty) <- infCases
     ]
