@@ -218,6 +218,8 @@ data Expr phase
 _Var :: Generic (Expr p) => Prism' (Expr p) (XVar p, Id p)
 _Var = #_Var
 
+deriving instance FieldC NFData (Expr p) => NFData (Expr p)
+
 deriving instance (Data p, FieldC Data (Expr p)) => Data (Expr p)
 
 -- | Names that has no effects for alpha-equivalence used only for the display purposes.
@@ -414,6 +416,8 @@ newtype RecordFieldTypes p = RecordFieldTypes {recFieldTypes :: [(Text, RecordFi
 
 deriving instance (Data (RecordFieldType p), Data p) => Data (RecordFieldTypes p)
 
+deriving newtype instance (NFData (RecordFieldType p)) => NFData (RecordFieldTypes p)
+
 deriving instance
   Show (RecordFieldType p) => Show (RecordFieldTypes p)
 
@@ -459,6 +463,8 @@ type family XVariant p
 newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantArgType p)]}
   deriving (Generic)
 
+deriving newtype instance NFData (VariantArgType p) => NFData (VariantTags p)
+
 deriving instance (Data (VariantArgType p), Data p) => Data (VariantTags p)
 
 deriving instance Show (VariantArgType p) => Show (VariantTags p)
@@ -492,6 +498,9 @@ data CaseAlt p = CaseAlt
   }
   deriving (Generic)
 
+deriving anyclass instance
+  FieldC NFData (CaseAlt p) => NFData (CaseAlt p)
+
 deriving instance (Data p, FieldC Data (CaseAlt p)) => Data (CaseAlt p)
 
 deriving instance FieldC Show (CaseAlt p) => Show (CaseAlt p)
@@ -504,6 +513,8 @@ deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlt p)
 
 newtype CaseAlts p = CaseAlts {getCaseAlts :: [(Text, CaseAlt p)]}
   deriving (Generic)
+
+deriving newtype instance NFData (CaseAlt p) => NFData (CaseAlts p)
 
 deriving instance (Data p, Data (CaseAlt p)) => Data (CaseAlts p)
 

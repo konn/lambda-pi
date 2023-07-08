@@ -11,6 +11,7 @@ import Language.Lambda.Syntax.LambdaPi.Eval (vSucc, vZero, (@@))
 import Language.Lambda.Syntax.LambdaPi.Parser
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
+import RIO (evaluateDeep, rnf)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Text.PrettyPrint (parens)
@@ -83,10 +84,14 @@ test_typeInfer :: TestTree
 test_typeInfer =
   testGroup
     "typeInfer"
-    [ testCase (show $ parens (pprint e)) $
+    [ testCaseSteps (show $ parens (pprint e)) $ \step ->
       case typeInfer 0 mempty e of
         Left err -> assertFailure $ "Typing error: " <> err
-        Right (ty0, _) -> ty0 @?= ty
+        Right (ty0, eTy) -> do
+          step "Check if type matches"
+          ty0 @?= ty
+          step "Check if typed expr doesn't contain bottom"
+          evaluateDeep $ rnf eTy
     | (e, ty) <- infCases
     ]
 
@@ -94,9 +99,12 @@ test_typeCheck :: TestTree
 test_typeCheck =
   testGroup
     "typeCheck"
-    [ testCase (show $ parens (pprint e)) $
+    [ testCaseSteps (show $ parens (pprint e)) $ \step -> do
+      step "check type"
       case typeCheck 0 mempty (XExpr $ Inf e) ty of
         Left err -> assertFailure $ "Typing error: " <> err
-        Right _ev' -> pure ()
+        Right eTy -> do
+          step "Check if typed term dosn't contain bottom"
+          evaluateDeep $ rnf eTy
     | (e, ty) <- infCases
     ]

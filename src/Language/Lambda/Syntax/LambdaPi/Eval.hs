@@ -84,14 +84,14 @@ data Value
   deriving (Generic)
 
 instance NFData LambdaTypeSpec where
-  rnf LambdaTypeSpec {..} = rnf lamArgType `seq` rnfTyFun lamBodyType
+  rnf LambdaTypeSpec {..} = rnf lamArgType `seq` rnfTyFun lamArgType lamBodyType
 
-rnfTyFun :: (Type -> Type) -> ()
-rnfTyFun f = f `seq` f VStar `seq` ()
+rnfTyFun :: Type -> (Type -> Type) -> ()
+rnfTyFun argTy f = f `seq` f (vfree argTy (XName $ EvLocal 0)) `seq` ()
 
 instance NFData Value where
-  rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun b
-  rnf (VPi lts a b) = lts `deepseq` a `deepseq` rnfTyFun b
+  rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun (lamArgType lts) b
+  rnf (VPi an a b) = an `deepseq` a `deepseq` rnfTyFun a b
   rnf VStar = ()
   rnf VNat = ()
   rnf (VVec a n) = a `deepseq` rnf n
@@ -152,7 +152,7 @@ instance NFData Neutral where
   rnf (NVecElim ty a t b i n xs) =
     ty `deepseq` a `deepseq` t `deepseq` b `deepseq` i `deepseq` n `deepseq` rnf xs
   rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
-  rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap rnfTyFun xs)
+  rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap (rnfTyFun VStar) xs)
 
 inferPrim :: HasCallStack => Prim -> Type
 inferPrim Tt = VNeutral $ NPrim VStar Unit
