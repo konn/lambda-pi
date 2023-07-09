@@ -11,6 +11,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -87,7 +88,6 @@ toInferable = \case
     Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toInferable b
-  Nat NoExtField -> pure $ Nat NoExtField
   Vec NoExtField a n -> Vec NoExtField <$> toCheckable a <*> toCheckable n
   Nil NoExtField a -> Nil NoExtField <$> toCheckable a
   Cons NoExtField a n x xs ->
@@ -145,7 +145,6 @@ toCheckable = \case
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toCheckable b
       <|> fmap inf . Let NoExtField v <$> toInferable e <*> toInferable b
-  Nat NoExtField -> pure $ inf $ Nat NoExtField
   Vec NoExtField a n -> fmap inf . Vec NoExtField <$> toCheckable a <*> toCheckable n
   Nil NoExtField a -> inf . Nil NoExtField <$> toCheckable a
   Cons NoExtField a n x xs ->
@@ -225,6 +224,9 @@ lookupName (XName (Local i)) ctx =
   ctx ^? #locals . ix i . to (`VarInfo` Nothing)
 lookupName (Global _ t) ctx = ctx ^? #globals . ix t
 lookupName _ _ = Nothing
+
+pattern VNat :: Value
+pattern VNat = VNeutral (NFree VStar (PrimName NoExtField Nat))
 
 typeCheck :: HasCallStack => Int -> Context -> Expr Checkable -> Type -> Result (Expr Eval)
 typeCheck i ctx (XExpr (Inf e)) ty = do
@@ -391,7 +393,6 @@ typeCheck _ _ (Ann c _ _) _ = noExtCon c
 typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c
 typeCheck _ _ (Pi c _ _ _) _ = noExtCon c
-typeCheck _ _ (Nat c) _ = noExtCon c
 typeCheck _ _ (App c _ _) _ = noExtCon c
 typeCheck _ _ (Vec c _ _) _ = noExtCon c
 typeCheck _ _ (Nil c _) _ = noExtCon c
@@ -475,7 +476,6 @@ typeInfer i ctx (Let NoExtField mv e b) = do
         (addLocal i vty ctx)
         (substBVar 0 (XName $ Local i) b)
   pure (ty, Let ty mv e' b')
-typeInfer _ _ Nat {} = pure (VStar, Nat NoExtField)
 typeInfer i ctx (Vec NoExtField a k) =
   fmap (VStar,) . Vec NoExtField <$> typeCheck i ctx a VStar <*> typeCheck i ctx k VNat
 typeInfer i ctx (Nil NoExtField a) = do
@@ -642,7 +642,6 @@ substBVar !i r (Pi c mv ann body) =
   Pi c mv (substBVar i r ann) (substBVar (i + 1) r body)
 substBVar !i r (Let NoExtField mv e b) =
   Let NoExtField mv (substBVar i r e) $ substBVar (i + 1) r b
-substBVar _ _ (Nat c) = Nat c
 substBVar i r (Vec c a n) = Vec c (substBVar i r a) (substBVar i r n)
 substBVar i r (Nil c a) = Nil c $ substBVar i r a
 substBVar i r (Cons c a n x xs) =
@@ -776,10 +775,6 @@ type instance LetName (Typing _) = AlphaName
 type instance LetRHS (Typing _) = Expr Inferable
 
 type instance LetBody (Typing e) = Expr (Typing e)
-
-type instance XNat Inferable = NoExtField
-
-type instance XNat Checkable = NoExtCon
 
 type instance XVec Inferable = NoExtField
 

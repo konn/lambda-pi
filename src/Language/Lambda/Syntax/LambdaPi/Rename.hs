@@ -79,7 +79,6 @@ renameExprM = \case
     Let NoExtField (AlphaName v)
       <$> renameExprM e
       <*> abstract v (renameExprM body)
-  Nat NoExtField -> pure $ Nat NoExtField
   Vec NoExtField x n -> Vec NoExtField <$> renameExprM x <*> renameExprM n
   Nil NoExtField x -> Nil NoExtField <$> renameExprM x
   Cons NoExtField t n x xs ->
@@ -177,8 +176,6 @@ type instance LetName Rename = AlphaName
 type instance LetRHS Rename = Expr Rename
 
 type instance LetBody Rename = Expr Rename
-
-type instance XNat Rename = NoExtField
 
 type instance XVec Rename = NoExtField
 

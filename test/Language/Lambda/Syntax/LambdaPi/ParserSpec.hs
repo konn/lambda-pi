@@ -47,7 +47,7 @@ inputCases =
         NoExtField
         "step"
         ( Just $
-            Pi NoExtField (DepNamed "n") (Nat NoExtField) $
+            Pi NoExtField (DepNamed "n") nat $
               Pi
                 NoExtField
                 Indep
@@ -174,13 +174,13 @@ zero :: ParsedExpr
 zero = Var NoExtField $ Primitive Zero
 
 nat :: Expr Parse
-nat = Nat NoExtField
+nat = Var NoExtField $ Primitive Nat
 
 star :: Expr Parse
 star = Star NoExtField
 
 vecCon' :: ParsedExpr
-vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
+vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
 
 pattern (:~>) :: ParsedExpr -> ParsedExpr -> ParsedExpr
 pattern (:~>) l r = Pi NoExtField Indep l r

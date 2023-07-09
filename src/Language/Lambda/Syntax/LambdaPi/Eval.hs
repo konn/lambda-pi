@@ -71,7 +71,6 @@ import Text.PrettyPrint.Monadic (Pretty (..))
 data Value
   = VLam LambdaTypeSpec AlphaName (Value -> Value)
   | VStar
-  | VNat
   | VPi AlphaName Value (Value -> Value)
   | VVec Value Value
   | VNil Value
@@ -93,7 +92,6 @@ instance NFData Value where
   rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun (lamArgType lts) b
   rnf (VPi an a b) = an `deepseq` a `deepseq` rnfTyFun a b
   rnf VStar = ()
-  rnf VNat = ()
   rnf (VVec a n) = a `deepseq` rnf n
   rnf (VNil a) = rnf a
   rnf (VCons a n x xs) = a `deepseq` n `deepseq` x `deepseq` rnf xs
@@ -106,7 +104,6 @@ instance NFData Value where
 typeOf :: Value -> Type
 typeOf (VLam LambdaTypeSpec {..} x _) = VPi x lamArgType lamBodyType
 typeOf VStar = VStar
-typeOf VNat = VStar
 typeOf VPi {} = VStar
 typeOf VVec {} = VStar
 typeOf (VNil a) = VVec a vZero
@@ -119,6 +116,9 @@ typeOf (VNeutral n) = typeOfNeutral n
 
 nSucc :: Neutral
 nSucc = NFree (VPi Anonymous VNat (const VNat)) (PrimName NoExtField Succ)
+
+pattern VNat :: Value
+pattern VNat = VNeutral (NFree VStar (PrimName NoExtField Nat))
 
 vSucc :: Value
 vSucc = VNeutral nSucc
@@ -158,6 +158,7 @@ nPrim ty p = NFree ty $ PrimName NoExtField p
 inferPrim :: HasCallStack => Prim -> Type
 inferPrim Tt = VNeutral $ nPrim VStar Unit
 inferPrim Unit = VStar
+inferPrim Nat = VStar
 inferPrim Zero = VNat
 inferPrim Succ = VPi Anonymous VNat (const VNat)
 inferPrim NatElim = natElimType
@@ -196,7 +197,6 @@ quote i (VLam ls@LambdaTypeSpec {..} mv f) =
           XName $
             Quote i
 quote _ VStar = Star NoExtField
-quote _ VNat = Nat NoExtField
 quote i (VVec a n) = Vec NoExtField (quote i a) (quote i n)
 quote i (VNil a) = Nil NoExtField (quote i a)
 quote i (VCons a n x xs) =
@@ -277,7 +277,6 @@ eval ctx (Let _ _ e b) =
   eval
     (ctx & #boundValues %~ (eval ctx e <|))
     b
-eval _ Nat {} = VNat
 eval ctx (Vec _ a n) = VVec (eval ctx a) (eval ctx n)
 eval ctx (Nil _ a) = VNil $ eval ctx a
 eval ctx (Cons _ a k v vk) =
@@ -419,7 +418,6 @@ unsubstBVar i = flip runReader 0 . go
     go (Let c mn e v) =
       Let <$> unsubstBVarValM i c <*> pure mn <*> go e <*> local (+ 1) (go v)
     go s@Star {} = pure s
-    go s@Nat {} = pure s
     go (Vec NoExtField x n) =
       Vec NoExtField <$> go x <*> go n
     go (Nil NoExtField c) = Nil NoExtField <$> go c
@@ -492,7 +490,6 @@ unsubstBVarValM i = go
         <$> unsubstLamTy i lt
         <*> pure name
         <*> pure (unsubstBVarValToM (lvl + 1) i . f)
-    go VNat = pure VNat
     go (VVec a n) = VVec <$> go a <*> go n
     go (VNil ty) = VNil <$> go ty
     go (VCons a n x xs) =
@@ -545,7 +542,6 @@ substBound :: HasCallStack => Int -> Value -> Type -> Value
 substBound i v (VLam lamTy mv f) =
   VLam (substBoundLamSpec i v lamTy) mv $ substBound i v . f
 substBound _ _ VStar = VStar
-substBound _ _ VNat = VNat
 substBound i v (VPi mv va f) =
   VPi mv (substBound i v va) $ substBound i v . f
 substBound i v (VNeutral neu) =
@@ -695,8 +691,6 @@ type instance LetName Eval = AlphaName
 type instance LetRHS Eval = Expr Eval
 
 type instance LetBody Eval = Expr Eval
-
-type instance XNat Eval = NoExtField
 
 type instance XVec Eval = NoExtField
 

@@ -276,7 +276,7 @@ zero :: ParsedExpr
 zero = Prim Zero
 
 nat :: Expr Parse
-nat = Nat NoExtField
+nat = Prim Nat
 
 star :: Expr Parse
 star = Star NoExtField
@@ -322,7 +322,7 @@ fieldSeqP tokenName sep fldSep = do
   pure flds
 
 vecCon' :: ParsedExpr
-vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just (Nat NoExtField)) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
+vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
 
 varP :: Parser ParsedExpr
 varP = Var NoExtField . Ident <$> identifier
@@ -331,7 +331,7 @@ primTypeP :: Parser ParsedExpr
 primTypeP =
   label "Primitive type" $
     Star NoExtField <$ (reserved "Type" <|> reserved "★")
-      <|> Nat NoExtField <$ (reserved "ℕ" <|> reserved "Nat")
+      <|> nat <$ (reserved "ℕ" <|> reserved "Nat")
 
 space :: Parser ()
 space =
@@ -480,8 +480,6 @@ type instance LetName Parse = Text
 type instance LetRHS Parse = Expr Parse
 
 type instance LetBody Parse = Expr Parse
-
-type instance XNat Parse = NoExtField
 
 type instance XVec Parse = NoExtField
 

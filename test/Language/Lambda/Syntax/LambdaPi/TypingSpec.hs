@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Language.Lambda.Syntax.LambdaPi.TypingSpec where
 
@@ -8,7 +9,7 @@ import qualified Data.Bifunctor as Bi
 import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Eval (vSucc, vZero, (@@))
+import Language.Lambda.Syntax.LambdaPi.Eval (Neutral (..), vSucc, vZero, (@@))
 import Language.Lambda.Syntax.LambdaPi.Parser
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
@@ -77,6 +78,9 @@ infCases =
                 f @@ n
     )
   ]
+
+pattern VNat :: Value
+pattern VNat = VNeutral (NFree VStar (PrimName NoExtField Nat))
 
 chkCases :: [(Expr Checkable, Type)]
 chkCases =

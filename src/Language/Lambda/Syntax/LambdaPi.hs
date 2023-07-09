@@ -83,9 +83,6 @@ module Language.Lambda.Syntax.LambdaPi (
   LetRHS,
   LetBody,
 
-  -- *** Naturals
-  XNat,
-
   -- *** Vectors
   XVec,
   VecType,
@@ -192,7 +189,6 @@ data Expr phase
   | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
   | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
-  | Nat (XNat phase)
   | Vec (XVec phase) (VecType phase) (VecLength phase)
   | Nil (XNil phase) (NilType phase)
   | Cons (XCons phase) (ConsType phase) (ConsLength phase) (ConsHead phase) (ConsTail phase)
@@ -265,10 +261,13 @@ instance Pretty e Prim where
   pretty Tt = "tt"
   pretty NatElim = "natElim"
   -- FIXME: Compress numerals
+  pretty Nat = "ℕ"
   pretty Succ = "succ"
   pretty Zero = "zero"
 
-data Prim = Unit | Tt | Succ | Zero | NatElim
+-- pretty (UserDefined t) = pretty t
+
+data Prim = Unit | Tt | Nat | Succ | Zero | NatElim --  | UserDefined Text
   deriving (Show, Eq, Ord, Generic, Data)
   deriving anyclass (Hashable)
   deriving anyclass (NFData)
@@ -370,8 +369,6 @@ type family LetName p
 type family LetRHS p
 
 type family LetBody p
-
-type family XNat p
 
 type family XVec p
 
@@ -693,7 +690,6 @@ instance
       , "in" <+> instantiate var (pretty e)
       ]
   -- FIXME: compress numerals
-  pretty Nat {} = text "ℕ"
   pretty (Vec _ a n) =
     text "Vec" <@> pretty a <@> pretty n
   pretty (Nil _ a) =
@@ -774,42 +770,3 @@ instantiate var act = do
 
 pprint :: Pretty PrettyEnv a => a -> Doc
 pprint = execDocM (mempty @PrettyEnv) . pretty
-
-{-
-occursChk :: Int -> Term 'Checkable -> Bool
-occursChk i (Inf te') = occursInf i te'
-occursChk i (Lam te') = occursChk (i + 1) te'
-occursChk i (MkRecord flds) = any (occursChk i . snd) flds
-
-occursInf :: Int -> Term 'Inferable -> Bool
-occursInf i (te' ::: te2) = occursChk i te' || occursChk i te2
-occursInf _ Star = False
-occursInf i (LamAnn te' te2) =
-  occursChk i te' || occursInf (i + 1) te2
-occursInf i (Pi te' te2) =
-  occursChk i te' || occursChk (i + 1) te2
-occursInf i (NatElim te' te2 te3 te4) =
-  occursChk i te' || occursChk i te2 || occursChk i te3 || occursChk i te4
-occursInf i (Bound n)
-  | i == n = True
-  | otherwise = False
-occursInf _ Free {} = False
-occursInf i (te' :@: te2) = occursInf i te' || occursChk i te2
-occursInf _ Nat = False
-occursInf _ Zero = False
-occursInf i (Succ te') = occursChk i te'
-occursInf i (Vec te' te2) = occursChk i te' || occursChk i te2
-occursInf i (Nil te') = occursChk i te'
-occursInf i (Cons te' te2 te3 te4) = occursChk i te' || occursChk i te2 || occursChk i te3 || occursChk i te4
-occursInf i (VecElim te' te2 te3 te4 te5 te6) =
-  occursChk i te'
-    || occursChk i te2
-    || occursChk i te3
-    || occursChk i te4
-    || occursChk i te5
-    || occursChk i te6
-occursInf i (Variant vars) = any (occursChk i . snd) vars
-occursInf i (Record flds) = any (occursChk i . snd) flds
-occursInf i (e :#: _) = occursInf i e
-
--}
