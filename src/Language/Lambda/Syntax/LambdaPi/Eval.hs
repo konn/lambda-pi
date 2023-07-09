@@ -137,7 +137,6 @@ instance Pretty e (Expr Eval) => Pretty e Value where
 
 data Neutral
   = NFree Type (Name Eval)
-  | NPrim Type Prim
   | NApp Type Neutral Value
   | NVecElim Type Value Value Value Value Value Neutral
   | NProjField Type Neutral Text
@@ -147,15 +146,17 @@ data Neutral
 
 instance NFData Neutral where
   rnf (NFree ty n) = ty `deepseq` rnf n
-  rnf (NPrim ty n) = ty `deepseq` rnf n
   rnf (NApp ty l r) = ty `deepseq` l `deepseq` rnf r
   rnf (NVecElim ty a t b i n xs) =
     ty `deepseq` a `deepseq` t `deepseq` b `deepseq` i `deepseq` n `deepseq` rnf xs
   rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
   rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap (rnfTyFun VStar) xs)
 
+nPrim :: Type -> Prim -> Neutral
+nPrim ty p = NFree ty $ PrimName NoExtField p
+
 inferPrim :: HasCallStack => Prim -> Type
-inferPrim Tt = VNeutral $ NPrim VStar Unit
+inferPrim Tt = VNeutral $ nPrim VStar Unit
 inferPrim Unit = VStar
 inferPrim Zero = VNat
 inferPrim Succ = VPi Anonymous VNat (const VNat)
@@ -163,7 +164,6 @@ inferPrim NatElim = natElimType
 
 typeOfNeutral :: Neutral -> Type
 typeOfNeutral (NFree retTy _) = retTy
-typeOfNeutral (NPrim retTy _) = retTy
 typeOfNeutral (NApp retTy _ _) = retTy
 typeOfNeutral (NVecElim retTy _ _ _ _ _ _) = retTy
 typeOfNeutral (NProjField retTy _ _) = retTy
@@ -235,7 +235,6 @@ quoteNeutral i (NVecElim ty a m mz ms k xs) =
     quoteNeutral i xs
 quoteNeutral i (NProjField ty r f) =
   ProjField ty (quoteNeutral i r) f
-quoteNeutral _ (NPrim ty v) = Var ty $ PrimName NoExtField v
 quoteNeutral i (NCase ty@CaseTypeInfo {..} v alts) =
   Case ty (quoteNeutral i v) $
     CaseAlts $
@@ -261,7 +260,7 @@ eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var ty fv) =
   case fv of
-    PrimName _ p -> VNeutral $ NPrim ty p
+    PrimName _ p -> VNeutral $ nPrim ty p
     Global _ g | Just v <- ctx ^. #namedBinds . at g -> v
     Bound _ n ->
       fromMaybe (error $ "eval/BoundVar: oob: " <> show (n, pprint ty, ctx)) $
@@ -515,7 +514,6 @@ unsubstBoundNeutral i = go
           XName (EvLocal j)
             | j == i -> asks $ Bound NoExtField
           _ -> pure v
-    go (NPrim ty p) = NPrim <$> unsubstBVarValM i ty <*> pure p
     go (NApp ty l v) =
       NApp
         <$> unsubstBVarValM i ty
@@ -593,7 +591,6 @@ substBoundNeutral i v (NProjField retTy0 r f) =
    in case substBoundNeutral i v r of
         Right rec -> Right $ evalProjField retTy f rec
         Left n -> Left $ NProjField retTy n f
-substBoundNeutral i v (NPrim retTy p) = Left $ NPrim (substBound i v retTy) p
 substBoundNeutral i v (NCase caseTy0 e valts) =
   let caseTy = substBoundCaseTy i v caseTy0
    in case substBoundNeutral i v e of
