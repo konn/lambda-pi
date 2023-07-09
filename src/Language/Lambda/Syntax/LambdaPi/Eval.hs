@@ -109,7 +109,7 @@ typeOf VStar = VStar
 typeOf VNat = VStar
 typeOf VPi {} = VStar
 typeOf VVec {} = VStar
-typeOf (VNil a) = VVec a (VNeutral (NFree VNat (PrimName NoExtField Zero)))
+typeOf (VNil a) = VVec a vZero
 typeOf (VCons a n _ _) = VVec a (VNeutral nSucc @@ n)
 typeOf VRecord {} = VStar
 typeOf (VMkRecord fldTys _) = VRecord fldTys
@@ -389,7 +389,7 @@ VLam _ _ f @@ r = f r
 VNeutral (P NatElim :@ t :@ base :@ ind) @@ n = evalNatElim t base ind n
 VNeutral neu @@ r
   | VPi _ _ f <- typeOfNeutral neu =
-      VNeutral $ NApp (f $ typeOf r) neu r
+      VNeutral $ NApp (f r) neu r
 l @@ r = error $ "Could not apply: " <> show ((pprint l, typeOf l), (pprint r, typeOf r))
 
 vapps :: NonEmpty Type -> Type
