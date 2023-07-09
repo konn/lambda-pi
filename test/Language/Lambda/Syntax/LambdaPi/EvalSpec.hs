@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Language.Lambda.Syntax.LambdaPi.EvalSpec where
@@ -34,6 +36,12 @@ inf = fromJust . toInferable . renameExpr . either error id . parseOnly exprP
 inferred :: HasCallStack => Text -> Expr Eval
 inferred = either error snd . typeInfer 0 mempty . inf
 
+newtype VerboseValue = VerboseValue {getValue :: Value}
+  deriving newtype (Eq)
+
+instance Show VerboseValue where
+  showsPrec _ (VerboseValue v) = shows (v, quote 0 v)
+
 test_eval :: TestTree
 test_eval =
   testGroup
@@ -41,6 +49,6 @@ test_eval =
     [ testCaseSteps (show $ parens (pprint e)) $ \step -> do
       step $ "typed term: " <> show e
       step "eval"
-      eval mempty e @?= val
+      VerboseValue (eval mempty e) @?= VerboseValue val
     | (e, val) <- evalCases
     ]
