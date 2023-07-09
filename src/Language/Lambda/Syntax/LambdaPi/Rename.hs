@@ -35,7 +35,7 @@ import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Parser (Parse, ParsedName (..))
+import Language.Lambda.Syntax.LambdaPi.Parser (Parse)
 
 type RenamedExpr = Expr Rename
 
@@ -53,11 +53,13 @@ renameExpr = runRenamer . renameExprM
 
 renameExprM :: Expr Parse -> Renamer (Expr Rename)
 renameExprM = \case
-  Var NoExtField (Primitive p) -> pure $ Var NoExtField $ PrimName NoExtField p
-  Var NoExtField (Ident v) ->
+  Var NoExtField (PrimName _ p) -> pure $ Var NoExtField $ PrimName NoExtField p
+  Var NoExtField (Global _ v) ->
     view (#boundVars . at v) <&> \case
       Just i -> Var NoExtField $ Bound NoExtField i
       Nothing -> Var NoExtField $ Global NoExtField v
+  Var NoExtField (Bound no _) -> noExtCon no
+  Var NoExtField (XName x) -> noExtCon x
   Ann NoExtField l r ->
     Ann NoExtField <$> renameExprM l <*> renameExprM r
   Star NoExtField -> pure $ Star NoExtField

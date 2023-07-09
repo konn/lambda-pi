@@ -57,12 +57,12 @@ inputCases =
                     (var "t")
                     ( App
                         NoExtField
-                        (Var NoExtField $ Primitive Succ)
+                        (Var NoExtField $ PrimName NoExtField Succ)
                         (var "n")
                     )
                 )
         )
-        (Var NoExtField "step")
+        (Var NoExtField $ Global NoExtField "step")
     )
   ,
     ( "{a: Nat, b: Nat -> Nat}"
@@ -126,7 +126,7 @@ test_exprP =
     ]
 
 natElim' :: ParsedExpr
-natElim' = Var NoExtField $ Primitive NatElim
+natElim' = Var NoExtField $ PrimName NoExtField NatElim
 
 succ' :: ParsedExpr -> Expr Parse
 succ' = App NoExtField succCon
@@ -168,19 +168,19 @@ apps :: [ParsedExpr] -> Expr Parse
 apps = foldl1' (App NoExtField)
 
 succCon :: ParsedExpr
-succCon = Var NoExtField $ Primitive Succ
+succCon = Var NoExtField $ PrimName NoExtField Succ
 
 zero :: ParsedExpr
-zero = Var NoExtField $ Primitive Zero
+zero = Var NoExtField $ PrimName NoExtField Zero
 
 nat :: Expr Parse
-nat = Var NoExtField $ Primitive Nat
+nat = Var NoExtField $ PrimName NoExtField Nat
 
 star :: Expr Parse
 star = Star NoExtField
 
 vecCon' :: ParsedExpr
-vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
+vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField $ Global NoExtField "t") (Var NoExtField $ Global NoExtField "n")
 
 pattern (:~>) :: ParsedExpr -> ParsedExpr -> ParsedExpr
 pattern (:~>) l r = Pi NoExtField Indep l r
@@ -199,4 +199,4 @@ vecNat5 :: Expr Parse
 vecNat5 = apps [vecCon', nat, succ' (succ' (succ' (succ' (succ' zero))))]
 
 var :: Text -> ParsedExpr
-var = Var NoExtField . Ident
+var = Var NoExtField . Global NoExtField

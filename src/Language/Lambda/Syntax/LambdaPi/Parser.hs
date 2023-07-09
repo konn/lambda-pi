@@ -13,7 +13,6 @@ module Language.Lambda.Syntax.LambdaPi.Parser (
   -- * ASTs,
   Parse,
   ParsedExpr,
-  ParsedName (..),
 
   -- * Parsers
   exprP,
@@ -50,18 +49,15 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as Map
 import Data.Semigroup
 import Data.Semigroup.Foldable (fold1)
-import Data.String
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import Language.Lambda.Syntax.LambdaPi
-import RIO (tshow)
 import Text.Megaparsec (Parsec, between, eof, errorBundlePretty, label, notFollowedBy, runParser, satisfy, takeWhile1P, takeWhileP, try, (<?>))
 import Text.Megaparsec.Char (space1, string)
 import Text.Megaparsec.Char.Lexer (decimal, skipBlockCommentNested, skipLineComment)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Text.PrettyPrint.Monadic (Pretty (..))
 
 type Parser = Parsec Void Text
 
@@ -226,7 +222,7 @@ pattern Succ' :: Expr Parse -> Expr Parse
 pattern Succ' e = App NoExtField (Prim Succ) e
 
 pattern Prim :: Prim -> Expr Parse
-pattern Prim p = Var NoExtField (Primitive p)
+pattern Prim p = Var NoExtField (PrimName NoExtField p)
 
 apps :: [ParsedExpr] -> Expr Parse
 apps = foldl1' (App NoExtField)
@@ -262,7 +258,7 @@ cons' =
     $ Cons NoExtField (var "t") (var "n") (var "x") (var "xs")
 
 var :: Text -> ParsedExpr
-var = Var NoExtField . Ident
+var = Var NoExtField . Global NoExtField
 
 naturalP :: Parser ParsedExpr
 naturalP =
@@ -322,10 +318,10 @@ fieldSeqP tokenName sep fldSep = do
   pure flds
 
 vecCon' :: ParsedExpr
-vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField "t") (Var NoExtField "n")
+vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField (Global NoExtField "t")) (Var NoExtField (Global NoExtField "n"))
 
 varP :: Parser ParsedExpr
-varP = Var NoExtField . Ident <$> identifier
+varP = Var NoExtField . Global NoExtField <$> identifier
 
 primTypeP :: Parser ParsedExpr
 primTypeP =
@@ -429,27 +425,15 @@ type instance XStar Parse = NoExtField
 
 type instance XVar Parse = NoExtField
 
-type instance Id Parse = ParsedName
+type instance Id Parse = Name Parse
 
-data ParsedName
-  = Ident !Text
-  | Primitive Prim
-  deriving (Show, Eq, Ord, Generic, Data)
+type instance XName Parse = NoExtCon
 
-instance Pretty e ParsedName where
-  pretty (Ident t) = pretty t
-  pretty (Primitive p) = pretty p
+type instance XGlobal Parse = NoExtField
 
-instance VarLike ParsedName where
-  varName (Ident t) = pure $ Just t
-  varName (Primitive p) = pure $ Just $ tshow $ pprint p
+type instance XPrimName Parse = NoExtField
 
-instance IsString ParsedName where
-  fromString "succ" = Primitive Succ
-  fromString "zero" = Primitive Zero
-  fromString "Unit" = Primitive Unit
-  fromString "tt" = Primitive Tt
-  fromString ident = Ident $ T.pack ident
+type instance XBound Parse = NoExtCon
 
 type instance XApp Parse = NoExtField
 
