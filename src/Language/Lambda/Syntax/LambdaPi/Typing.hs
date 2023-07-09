@@ -69,8 +69,7 @@ import GHC.Generics (Generic)
 import GHC.Stack
 import Language.Lambda.Syntax.LambdaPi
 import Language.Lambda.Syntax.LambdaPi.Eval
-import Language.Lambda.Syntax.LambdaPi.Parser
-import Language.Lambda.Syntax.LambdaPi.Rename (Rename, renameExpr)
+import Language.Lambda.Syntax.LambdaPi.Rename (Rename)
 import Text.PrettyPrint.Monadic (Pretty (..))
 
 toInferable :: Expr Rename -> Maybe (Expr Inferable)
@@ -881,11 +880,3 @@ deriving instance Ord (XExprTyping m)
 
 instance Pretty PrettyEnv (XExprTyping m) where
   pretty (Inf e) = pretty e
-
-debug :: (Type, Expr Eval)
-debug =
-  either error id $
-    maybe (error "h") (typeInfer 0 mempty) $
-      toInferable $
-        either (error "no") renameExpr $
-          parseOnly exprP "natElim"
