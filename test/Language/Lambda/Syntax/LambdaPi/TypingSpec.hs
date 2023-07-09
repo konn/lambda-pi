@@ -4,6 +4,7 @@
 
 module Language.Lambda.Syntax.LambdaPi.TypingSpec where
 
+import qualified Data.Bifunctor as Bi
 import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Language.Lambda.Syntax.LambdaPi
@@ -77,8 +78,15 @@ infCases =
     )
   ]
 
+chkCases :: [(Expr Checkable, Type)]
+chkCases =
+  [(chk "natElim (λ n. ℕ) 3 (λ k. succ) 2", VNat)]
+
 inf :: Text -> Expr Inferable
 inf = fromJust . toInferable . renameExpr . either error id . parseOnly exprP
+
+chk :: Text -> Expr Checkable
+chk = fromJust . toCheckable . renameExpr . either error id . parseOnly exprP
 
 test_typeInfer :: TestTree
 test_typeInfer =
@@ -90,6 +98,7 @@ test_typeInfer =
         Right (ty0, eTy) -> do
           step "Check if type matches"
           ty0 @?= ty
+          step $ "Typed term: " <> show (pprint eTy)
           step "Check if typed expr doesn't contain bottom"
           evaluateDeep $ rnf eTy
     | (e, ty) <- infCases
@@ -101,10 +110,10 @@ test_typeCheck =
     "typeCheck"
     [ testCaseSteps (show $ parens (pprint e)) $ \step -> do
       step "check type"
-      case typeCheck 0 mempty (XExpr $ Inf e) ty of
+      case typeCheck 0 mempty e ty of
         Left err -> assertFailure $ "Typing error: " <> err
         Right eTy -> do
           step "Check if typed term dosn't contain bottom"
           evaluateDeep $ rnf eTy
-    | (e, ty) <- infCases
+    | (e, ty) <- map (Bi.first $ XExpr . Inf) infCases ++ chkCases
     ]
