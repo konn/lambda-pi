@@ -623,8 +623,6 @@ type instance XBound Eval = NoExtField
 
 type instance XPrimName Eval = NoExtField
 
-type instance Id Eval = Name Eval
-
 type instance XAnn Eval = Type
 
 type instance AnnLHS Eval = Expr Eval

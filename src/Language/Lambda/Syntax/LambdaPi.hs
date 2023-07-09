@@ -56,7 +56,6 @@ module Language.Lambda.Syntax.LambdaPi (
 
   -- *** Variables
   XVar,
-  Id,
 
   -- *** Application
   XApp,
@@ -184,7 +183,7 @@ record shrinking, record update
 data Expr phase
   = Ann (XAnn phase) (AnnLHS phase) (AnnRHS phase)
   | Star (XStar phase)
-  | Var (XVar phase) (Id phase)
+  | Var (XVar phase) (Name phase)
   | App (XApp phase) (AppLHS phase) (AppRHS phase)
   | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
@@ -211,7 +210,7 @@ data Expr phase
   | XExpr (XExpr phase)
   deriving (Generic)
 
-_Var :: Generic (Expr p) => Prism' (Expr p) (XVar p, Id p)
+_Var :: Generic (Expr p) => Prism' (Expr p) (XVar p, Name p)
 _Var = #_Var
 
 deriving instance FieldC NFData (Expr p) => NFData (Expr p)
@@ -328,8 +327,6 @@ type family AnnRHS a
 type family XStar p
 
 type family XVar p
-
-type family Id p
 
 type family XApp p
 
@@ -590,7 +587,7 @@ l <@> r =
 instance
   ( Pretty PrettyEnv (AnnLHS phase)
   , Pretty PrettyEnv (AnnRHS phase)
-  , VarLike (Id phase)
+  , VarLike (XName phase)
   , Pretty PrettyEnv (AppLHS phase)
   , Pretty PrettyEnv (AppRHS phase)
   , HasBindeeType (LamBindType phase)

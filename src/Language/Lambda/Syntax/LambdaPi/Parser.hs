@@ -425,8 +425,6 @@ type instance XStar Parse = NoExtField
 
 type instance XVar Parse = NoExtField
 
-type instance Id Parse = Name Parse
-
 type instance XName Parse = NoExtCon
 
 type instance XGlobal Parse = NoExtField

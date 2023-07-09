@@ -36,5 +36,5 @@ test_renameExpr =
         ]
     ]
 
-var :: XVar p ~ NoExtField => Id p -> Expr p
+var :: XVar p ~ NoExtField => Name p -> Expr p
 var = Var NoExtField

@@ -738,8 +738,6 @@ type instance XBound (Typing _) = NoExtField
 
 type instance XPrimName (Typing _) = NoExtField
 
-type instance Id (Typing m) = Name (Typing m)
-
 type instance XApp Inferable = NoExtField
 
 type instance XApp Checkable = NoExtCon

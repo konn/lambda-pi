@@ -8,7 +8,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -134,8 +133,6 @@ type instance XGlobal Rename = NoExtField
 type instance XBound Rename = NoExtField
 
 type instance XPrimName Rename = NoExtField
-
-type instance Id Rename = Name Rename
 
 type instance XName Rename = NoExtCon
 
