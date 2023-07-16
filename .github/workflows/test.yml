@@ -12,26 +12,26 @@ jobs:
       with:
         path: ~/.cabal/store
         key: |
-          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
+          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
         restore-keys: |
-          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-
-          ubuntu-9.2.7-cabal-store-
+          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-
+          ubuntu-9.2.8-cabal-store-
 
     - name: Restore ./dist-newstyle
       uses: actions/cache/restore@v3
       with:
         path: dist-newstyle
         key: |
-          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
         restore-keys: |
-          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
-          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-
-          ubuntu-9.2.7-dist-newstyle-
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-
+          ubuntu-9.2.8-dist-newstyle-
     - name: Setup Haskell
       uses: haskell/actions/setup@v2
       with:
         cabal-version: 3.10.1.0
-        ghc-version: 9.2.7
+        ghc-version: 9.2.8
     - run: cabal update
     - name: Build dependencies
       run: |
@@ -42,7 +42,7 @@ jobs:
       with:
         path: ~/.cabal/store
         key: |
-          ubuntu-9.2.7-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
+          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
 
     - name: Build All
       id: build
@@ -54,7 +54,7 @@ jobs:
       with:
         path: dist-newstyle
         key: |
-          ubuntu-9.2.7-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
 
     - name: Collect binaries
       shell: bash
