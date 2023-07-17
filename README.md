@@ -19,7 +19,7 @@ With small extension with inferrable annotated lambda term.
 - G. Betarte: "[_Type checking dependent (record) types and subtyping_][betarte]". Journal of Functional Programming , Volume 10 , Issue 2. 2000.
 - T. Altenkrich, N. A. Danielsson, A. Löh, and N. Oury: "[_$`\Pi\Sigma`$: Dependent Types without the Sugar_][pisigma]". FLOPS 2010.
 - B. C. Pierce: "Types and Programming Languages".
-- Ed. by B. C. Pierce: "Advanced Topics in Types and Programming Languages".
+- F. Pottier, and D. Rémy: "_The Essense of ML Inference_". In: "Advanced Topics in Types and Programming Languages", ed. by B. C. Pierce. (Especially: §10.8 "Rows")
 
 [tutorial]: https://www.andres-loeh.de/LambdaPi/
 [bidir]: https://arxiv.org/abs/1908.05839
