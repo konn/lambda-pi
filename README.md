@@ -17,7 +17,7 @@ With small extension with inferrable annotated lambda term.
 - A. Rossberg: "[_1ML – Core and Modules United (F-ing First-class Modules)_][1ml]", extended version. ICFP 2015.
 - A. Rossberg: "[_1ML with Special Effects: F-ing Generativity Polymorphism_][1ml-gen]". WadlerFest 2016.
 - G. Betarte: "[_Type checking dependent (record) types and subtyping_][betarte]". Journal of Functional Programming , Volume 10 , Issue 2. 2000.
-- T. Altenkrich, N. A. Danielsson, A. Löh, and N. Oury: "[_$`\Pi\Sigma`$: ΠΣ: Dependent Types without the Sugar][pisigma]_"
+- T. Altenkrich, N. A. Danielsson, A. Löh, and N. Oury: "[_$`\Pi\Sigma`$: ΠΣ: Dependent Types without the Sugar][pisigma]_". FLOPS 2010.
 - B. C. Pierce: "Types and Programming Languages".
 - Ed. by B. C. Pierce: "Advanced Topics in Types and Programming Languages".
 
