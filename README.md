@@ -1,4 +1,4 @@
-# My hobby implementation of dependent-type system
+# My hobby implementation of a dependent-type system
 
 Based on ``[A Tutorial Implementation of a Dependently Typed Lambda Calculus][tutorial]'' by A. Löh, C. McBride, and W. Swiestra.
 With small extension with inferrable annotated lambda term.
@@ -20,7 +20,7 @@ With small extension with inferrable annotated lambda term.
 - A. Rossberg: "[_1ML with Special Effects: F-ing Generativity Polymorphism_][1ml-gen]". WadlerFest 2016.
 - G. Betarte: "[_Type checking dependent (record) types and subtyping_][betarte]". Journal of Functional Programming, Volume 10, Issue 2. 2000.
 - Z. Luo: "[_Dependent Record Types Revisited_][deprec]". MLPA 2009.
-- F. Pottier and D. Rémy: "_The Essense of ML Inference_". In: "Advanced Topics in Types and Programming Languages", ed. by B. C. Pierce. (Especially: §10.8 "Rows")
+- F. Pottier and D. Rémy: "[_The Essense of ML Inference_][ml-essense]". In: "Advanced Topics in Types and Programming Languages", ed. by B. C. Pierce. (Especially: §10.8 "Rows")
 - C. Omar, I. Voysey, R. Chugh, and M. A. Hammer: "[_Live Functional Programming with Typed Holes_][hazel19]". POPL 2019. Extended Version.
 - Z. Pan: "[_Type Hole Inference_][holeinf]". ICFP 2020.
 
@@ -35,3 +35,4 @@ With small extension with inferrable annotated lambda term.
 [deprec]: https://www.cs.rhul.ac.uk/home/zhaohui/DRT09.pdf
 [hazel19]: https://arxiv.org/abs/1805.00155
 [holeinf]: https://pper.github.io/type_hole_inference.pdf
+[ml-essense]: http://cristal.inria.fr/attapl/
