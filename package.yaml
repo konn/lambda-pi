@@ -21,9 +21,9 @@ description:         Please see the README on GitHub at <https://github.com/konn
 
 dependencies:
 - base >= 4.7 && < 5
+- algebraic-graphs
 - attoparsec
 - bifunctors
-- bound
 - bytestring
 - containers
 - dependent-sum
@@ -60,7 +60,6 @@ dependencies:
 - text
 - transformers
 - type-natural
-- unordered-containers
 - unordered-containers
 - vector
 
