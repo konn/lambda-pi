@@ -17,6 +17,7 @@ With small extension with inferrable annotated lambda term.
 - A. Rossberg: "[_1ML – Core and Modules United (F-ing First-class Modules)_][1ml]", extended version. ICFP 2015.
 - A. Rossberg: "[_1ML with Special Effects: F-ing Generativity Polymorphism_][1ml-gen]". WadlerFest 2016.
 - G. Betarte: "[_Type checking dependent (record) types and subtyping_][betarte]". Journal of Functional Programming , Volume 10 , Issue 2. 2000.
+- Z. Luo: "[_Dependent Record Types Revisited_][deprec]". MLPA 2009.
 - T. Altenkrich, N. A. Danielsson, A. Löh, and N. Oury: "[_$`\Pi\Sigma`$: Dependent Types without the Sugar_][pisigma]". FLOPS 2010.
 - B. C. Pierce: "Types and Programming Languages".
 - F. Pottier, and D. Rémy: "_The Essense of ML Inference_". In: "Advanced Topics in Types and Programming Languages", ed. by B. C. Pierce. (Especially: §10.8 "Rows")
@@ -29,3 +30,4 @@ With small extension with inferrable annotated lambda term.
 [1ml-gen]: https://people.mpi-sws.org/~rossberg/1ml/1ml-effects.pdf
 [betarte]: https://www.cambridge.org/core/journals/journal-of-functional-programming/article/type-checking-dependent-record-types-and-subtyping/1793E1F504A8B156B7A3EF9F17A42549
 [pisigma]: https://www.andres-loeh.de/PiSigma/PiSigma.pdf
+[deprec]: https://www.cs.rhul.ac.uk/home/zhaohui/DRT09.pdf
