@@ -11,8 +11,8 @@ With small extension with inferrable annotated lambda term.
 ## References
 
 - A. Löh, C. McBride, and W. Swiestra: "[_A Tutorial Implementation of a Dependently Typed Lambda Calculus_][tutorial]". Fundamenta Informaticae XXI. 2001.
-- J. Dunfield and N. Krishnaswami: "[_Bidirectional Typing_][bidir]". ACM Computing Surveys, Volume 54, Issue 5. 2021.
-- S. Najd and S. P. Jones: "[_Trees that Grow_][ttg]". Journal of Universal Computer Science, Vol. 23, no. 1. 2021.
+- J. Dunfield, and N. Krishnaswami: "[_Bidirectional Typing_][bidir]". ACM Computing Surveys, Volume 54, Issue 5. 2021.
+- S. Najd, and S. P. Jones: "[_Trees that Grow_][ttg]". Journal of Universal Computer Science, Vol. 23, no. 1. 2021.
 - M. Lennon-Bertrand: "[_Complete Bidirectional Typing for the Calculus of Inductive Constructions_][cic-bidir]". 2021.
 - A. Rossberg: "[_1ML – Core and Modules United (F-ing First-class Modules)_][1ml]", extended version. ICFP 2015.
 - A. Rossberg: "[_1ML with Special Effects: F-ing Generativity Polymorphism_][1ml-gen]". WadlerFest 2016.
