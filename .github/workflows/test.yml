@@ -45,7 +45,7 @@ jobs:
       with:
         path: ~/.cabal/store
         key: |
-          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
+          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{github.sha}}
 
     - name: Build All
       id: build
