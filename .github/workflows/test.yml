@@ -57,7 +57,7 @@ jobs:
       with:
         cabal-version: 3.10.1.0
         ghc-version: 9.2.8
-    - run: cabal update
+    - run: ${CABAL} update
     - name: Build dependencies
       run: |
         ${CABAL} build --only-dependencies all
