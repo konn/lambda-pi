@@ -8,21 +8,36 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-22.04
+    outputs:
+      store-cache-key: ${{ steps.calc-cache-keys.outputs.store-cache-key}}
+      dist-cache-key: ${{ steps.calc-cache-keys.outputs.dist-cache-key}}
     steps:
     - name: Checkout
       uses: actions/checkout@v3
-    - name: Set file hash
+    - name: Calc cache-keys
+      id: calc-cache-keys
       run: |
-        echo "FILE_HASH=${{hashFiles('**/*.hs')}}" >> ${GITHUB_ENV}
+        HS_FILE_HASH=${{hashFiles('**/*.hs')}}
+        echo "HS_FILE_HASH=${HS_FILE_HASH}" >> "${GITHUB_ENV}"
+        FREEZE_FILE_HASH=${{hashFiles('cabal.project.freeze')}}
+        echo "FREEZE_FILE_HASH=${FREEZE_FILE_HASH}" >> "${GITHUB_ENV}"
+        PACKAGE_FILE_HASH=${{ hashFiles('package.yaml', '**/*.cabal') }}
+        echo "PACKAGE_FILE_HASH=${PACKAGE_FILE_HASH}" >> "${GITHUB_ENV}"
+
+        STORE_CACHE_KEY="ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${{github.sha}}"
+        echo "store-cache-key=${STORE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
+
+        DIST_CACHE_KEY="ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}-${{github.sha}}"
+
     - name: Restore ~/.cabal/store
       uses: actions/cache/restore@v3
       with:
         path: ~/.cabal/store
         key: |
-          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{github.sha}}
+          ${{steps.calc-cache-keys.outputs.store-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
-          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-
+          ubuntu-9.2.8-cabal-store-${{env.FREEZE_FILE_HASH}}-${{env.PACKAGE_FILE_HASH}}-
+          ubuntu-9.2.8-cabal-store-${{env.FREEZE_FILE_HASH}}-
           ubuntu-9.2.8-cabal-store-
 
     - name: Restore ./dist-newstyle
@@ -30,11 +45,11 @@ jobs:
       with:
         path: dist-newstyle
         key: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ env.FILE_HASH }}-${{github.sha}}
+          ${{steps.calc-cache-keys.outputs.dist-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ env.FILE_HASH }}-
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-
+          ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}-
+          ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-
+          ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-
           ubuntu-9.2.8-dist-newstyle-
     - name: Setup Haskell
       uses: haskell/actions/setup@v2
@@ -50,8 +65,7 @@ jobs:
       uses: actions/cache/save@v3
       with:
         path: ~/.cabal/store
-        key: |
-          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{github.sha}}
+        key:  ${{steps.calc-cache-keys.outputs.store-cache-key}}
 
     - name: Build All
       id: build
@@ -62,8 +76,7 @@ jobs:
       uses: actions/cache/save@v3
       with:
         path: dist-newstyle
-        key: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ env.FILE_HASH }}-${{github.sha}}
+        key: ${{steps.calc-cache-keys.outputs.dist-cache-key}}
 
   test:
     name: Run Tests
@@ -80,14 +93,12 @@ jobs:
       uses: actions/cache/restore@v3
       with:
         path: ~/.cabal/store
-        key: |
-          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{github.sha}}
+        key: ${{ needs.build.outputs.store-cache-key }}
         fail-on-cache-miss: true
     - name: Restore Test Cache
       uses: actions/cache/restore@v3
       with:
-        key: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-${{github.sha}}
+        key: ${{ needs.build.outputs.dist-cache-key }}
         path: dist-newstyle
         fail-on-cache-miss: true
     - name: Run Tests
