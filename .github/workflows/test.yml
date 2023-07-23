@@ -1,5 +1,6 @@
 on: push
 name: Build and Test
+
 jobs:
   build:
     name: Build
@@ -12,8 +13,9 @@ jobs:
       with:
         path: ~/.cabal/store
         key: |
-          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}
+          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{github.sha}}
         restore-keys: |
+          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
           ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-
           ubuntu-9.2.8-cabal-store-
 
@@ -22,8 +24,9 @@ jobs:
       with:
         path: dist-newstyle
         key: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-${{github.sha}}
         restore-keys: |
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-
           ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
           ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-
           ubuntu-9.2.8-dist-newstyle-
@@ -54,38 +57,7 @@ jobs:
       with:
         path: dist-newstyle
         key: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}
-
-    - name: Collect binaries
-      shell: bash
-      run: |
-        set -euxo pipefail
-        wget https://github.com/haskell-hvr/cabal-plan/releases/download/v0.7.3.0/cabal-plan-0.7.3.0-x86_64-linux.xz
-        xz -d <cabal-plan-0.7.3.0-x86_64-linux.xz >./cabal-plan
-        chmod +x ./cabal-plan
-        BIN_DIR=artifacts/bin
-        TEST_DIR=artifacts/test
-        BENCH_DIR=artifacts/bench
-        mkdir -p "${BIN_DIR}" "${TEST_DIR}" "${BENCH_DIR}"
-        ./cabal-plan list-bins --hide-setup --hide-global --hide-builtin \
-          | grep -e lambda-pi | grep -e lambda-pi |  while read -r COMP_TARGET; do
-            COMP=$(echo "${COMP_TARGET}" | gawk '{print $1}')
-            TARGET=$(echo "${COMP_TARGET}" | gawk '{print $2}')
-            if [[ "${COMP}" =~ :test: ]]; then 
-              cp "${TARGET}" "${TEST_DIR}/"
-            elif [[ "${COMP}" =~ :bench: ]]; then 
-              cp "${TARGET}" "${BENCH_DIR}/"
-            else
-              cp "${TARGET}" "${BIN_DIR}/"
-            fi
-        done
-        tar -caf artifacts.tar.zst artifacts/
-
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        path: artifacts.tar.zst
-        name: binaries
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-${{github.sha}}
 
   test:
     name: Run Tests
@@ -93,14 +65,24 @@ jobs:
     needs: build
     steps:
     - uses: actions/checkout@v3
-    - name: Download Artifacts
-      uses: actions/download-artifact@v3
-    - name: Decompress
-      run: tar xaf binaries/artifacts.tar.zst
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        cabal-version: 3.10.1.0
+        ghc-version: 9.2.8
+    - name: Restore ~/.cabal/store
+      uses: actions/cache/restore@v3
+      with:
+        path: ~/.cabal/store
+        key: |
+          ubuntu-9.2.8-cabal-store-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{github.sha}}
+        fail-on-cache-miss: true
+    - name: Restore Test Cache
+      uses: actions/cache/restore@v3
+      with:
+        key: |
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-${{github.sha}}
+        path: dist-newstyle
+        fail-on-cache-miss: true
     - name: Run Tests
-      run: |
-        set -euxo pipefail
-        find ./artifacts/test -type f | while read -r TEST; do
-          chmod +x "${TEST}"
-          "${TEST}" +RTS -N4
-        done
+      run: cabal test all
