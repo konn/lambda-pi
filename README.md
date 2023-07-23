@@ -7,6 +7,7 @@ With small extension with inferrable annotated lambda term.
 
 - Build an inconsistent dependently-typed programming language
 - Module system based on records
+- Futamura Projections?
 
 ## References (in a random order, segmented roughly based on topics)
 
