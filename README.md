@@ -15,10 +15,10 @@ With small extension with inferrable annotated lambda term.
 - S. Najd and S. P. Jones: "[_Trees that Grow_][ttg]". Journal of Universal Computer Science, Vol. 23, no. 1. 2021.
 - B. C. Pierce: "Types and Programming Languages".
 - T. Altenkrich, N. A. Danielsson, A. Löh, and N. Oury: "[_$`\Pi\Sigma`$: Dependent Types without the Sugar_][pisigma]". FLOPS 2010.
-- T. Altenkrich and N. Oury: "[_$`\Pi\Sigma`$: A Core Language for Dependently Typed Programming_][pisigma-draft]". FLOPS 2010.
+- T. Altenkrich and N. Oury: "[_$`\Pi\Sigma`$: A Core Language for Dependently Typed Programming_][pisigma-draft]".
 - T. Altenkrich: "[_The case of the smart case: How to implement conditional convertibility?_][converting]". Shonan 2011.
-- T. Altenkrich, C. MacBride, and W. Swiestra: "[_Observational Equality, Now!_][obseq-now]". Shonan 2011.
-- L. Pujet and N. Tabareau: "[_Observational Equality: Now for Good_][obseq-now]". Shonan 2011.
+- T. Altenkrich, C. MacBride, and W. Swiestra: "[_Observational Equality, Now!_][obseq-now]". PLPV '07.
+- L. Pujet and N. Tabareau: "[_Observational Equality: Now for Good_][obseq-now]". POPL 2022.
 - M. Lennon-Bertrand: "[_Complete Bidirectional Typing for the Calculus of Inductive Constructions_][cic-bidir]". 2021.
 - A. Rossberg: "[_1ML – Core and Modules United (F-ing First-class Modules)_][1ml]", extended version. ICFP 2015.
 - A. Rossberg: "[_1ML with Special Effects: F-ing Generativity Polymorphism_][1ml-gen]". WadlerFest 2016.
