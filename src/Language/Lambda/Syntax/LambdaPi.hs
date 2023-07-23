@@ -40,6 +40,7 @@ module Language.Lambda.Syntax.LambdaPi (
   NoExtField (..),
   NoExtCon (),
   noExtCon,
+  Located (..),
 
   -- ** Primitives
   Prim (..),
@@ -154,14 +155,19 @@ import Control.Arrow ((>>>))
 import Control.Lens
 import Control.Monad (forM_)
 import Control.Monad.Reader.Class
+import Data.Bifoldable
+import Data.Bitraversable
 import Data.Data (Data)
 import Data.Function (on)
+import Data.Functor.Apply qualified as Apply
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import Data.Hashable (Hashable)
 import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Ord (comparing)
+import Data.Semigroup.Bifoldable
+import Data.Semigroup.Bitraversable
 import Data.Semigroup.Generic
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
@@ -172,6 +178,26 @@ import GHC.Generics (Generic, Rep)
 import GHC.Generics.Constraint
 import RIO (NFData)
 import Text.PrettyPrint.Monadic
+
+data Located e a = Loc {location :: !e, unLoc :: !a}
+  deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+  deriving anyclass (Bitraversable)
+
+instance Bifunctor Located where
+  bimap = bimapDefault
+  {-# INLINE bimap #-}
+
+instance Bifoldable Located where
+  bifoldMap = bifoldMapDefault
+  {-# INLINE bifoldMap #-}
+
+instance Bifoldable1 Located where
+  bifoldMap1 = bifoldMap1Default
+  {-# INLINE bifoldMap1 #-}
+
+instance Bitraversable1 Located where
+  bitraverse1 f g (Loc l a) = Loc <$> f l Apply.<.> g a
+  {-# INLINE bitraverse1 #-}
 
 {-
 TODO:
@@ -266,7 +292,7 @@ instance Pretty e Prim where
 
 -- pretty (UserDefined t) = pretty t
 
-data Prim = Unit | Tt | Nat | Succ | Zero | NatElim --  | UserDefined Text
+data Prim = Unit | Tt | Nat | Succ | Zero | NatElim
   deriving (Show, Eq, Ord, Generic, Data)
   deriving anyclass (Hashable)
   deriving anyclass (NFData)

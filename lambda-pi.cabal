@@ -44,10 +44,10 @@ library
       src
   ghc-options: -Wall
   build-depends:
-      attoparsec
+      algebraic-graphs
+    , attoparsec
     , base >=4.7 && <5
     , bifunctors
-    , bound
     , bytestring
     , containers
     , dependent-map
@@ -96,10 +96,10 @@ executable lambda-pi-exe
       app
   ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      attoparsec
+      algebraic-graphs
+    , attoparsec
     , base >=4.7 && <5
     , bifunctors
-    , bound
     , bytestring
     , containers
     , dependent-map
@@ -156,10 +156,10 @@ test-suite lambda-pi-test
   build-tool-depends:
       tasty-discover:tasty-discover
   build-depends:
-      attoparsec
+      algebraic-graphs
+    , attoparsec
     , base >=4.7 && <5
     , bifunctors
-    , bound
     , bytestring
     , containers
     , dependent-map
