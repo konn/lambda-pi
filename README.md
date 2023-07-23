@@ -8,7 +8,7 @@ With small extension with inferrable annotated lambda term.
 - Build an inconsistent dependently-typed programming language
 - Module system based on records
 
-## References
+## References (in a random order, segmented roughly based on topics)
 
 - A. Löh, C. McBride, and W. Swiestra: "[_A Tutorial Implementation of a Dependently Typed Lambda Calculus_][tutorial]". Fundamenta Informaticae XXI. 2001.
 - J. Dunfield and N. Krishnaswami: "[_Bidirectional Typing_][bidir]". ACM Computing Surveys, Volume 54, Issue 5. 2021.
