@@ -15,6 +15,10 @@ With small extension with inferrable annotated lambda term.
 - S. Najd and S. P. Jones: "[_Trees that Grow_][ttg]". Journal of Universal Computer Science, Vol. 23, no. 1. 2021.
 - B. C. Pierce: "Types and Programming Languages".
 - T. Altenkrich, N. A. Danielsson, A. Löh, and N. Oury: "[_$`\Pi\Sigma`$: Dependent Types without the Sugar_][pisigma]". FLOPS 2010.
+- T. Altenkrich and N. Oury: "[_$`\Pi\Sigma`$: A Core Language for Dependently Typed Programming_][pisigma-draft]". FLOPS 2010.
+- T. Altenkrich: "[_The case of the smart case: How to implement conditional convertibility?_][converting]". Shonan 2011.
+- T. Altenkrich, C. MacBride, and W. Swiestra: "[_Observational Equality, Now!_][obseq-now]". Shonan 2011.
+- L. Pujet and N. Tabareau: "[_Observational Equality: Now for Good_][obseq-now]". Shonan 2011.
 - M. Lennon-Bertrand: "[_Complete Bidirectional Typing for the Calculus of Inductive Constructions_][cic-bidir]". 2021.
 - A. Rossberg: "[_1ML – Core and Modules United (F-ing First-class Modules)_][1ml]", extended version. ICFP 2015.
 - A. Rossberg: "[_1ML with Special Effects: F-ing Generativity Polymorphism_][1ml-gen]". WadlerFest 2016.
@@ -32,6 +36,10 @@ With small extension with inferrable annotated lambda term.
 [1ml-gen]: https://people.mpi-sws.org/~rossberg/1ml/1ml-effects.pdf
 [betarte]: https://www.cambridge.org/core/journals/journal-of-functional-programming/article/type-checking-dependent-record-types-and-subtyping/1793E1F504A8B156B7A3EF9F17A42549
 [pisigma]: https://www.andres-loeh.de/PiSigma/PiSigma.pdf
+[pisigma-draft]: https://www.cs.nott.ac.uk/~psztxa/publ/pisigma.pdf
+[converting]: https://shonan.nii.ac.jp/archives/seminar/007/files/2011/09/altenkirch_slides.pdf
+[obseq-now]: https://www.researchgate.net/publication/220906552_Observational_equality_now?enrichId=rgreq-6212ca412b68c29f16e5dbc5d474c84c-XXX&enrichSource=Y292ZXJQYWdlOzIyMDkwNjU1MjtBUzoxMDQ5MjYwNTUyMzk2ODFAMTQwMjAyNzcyOTU1Mg%3D%3D&el=1_x_2&_esc=publicationCoverPdf
+[obseq-now-good]: https://inria.hal.science/hal-03367052v4
 [deprec]: https://www.cs.rhul.ac.uk/home/zhaohui/DRT09.pdf
 [hazel19]: https://arxiv.org/abs/1805.00155
 [holeinf]: https://pper.github.io/type_hole_inference.pdf
