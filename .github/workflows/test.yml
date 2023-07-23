@@ -26,8 +26,9 @@ jobs:
 
         STORE_CACHE_KEY="ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${{github.sha}}"
         echo "store-cache-key=${STORE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
-
+        
         DIST_CACHE_KEY="ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}-${{github.sha}}"
+        echo "dist-cache-key=${DIST_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
 
     - name: Restore ~/.cabal/store
       uses: actions/cache/restore@v3
