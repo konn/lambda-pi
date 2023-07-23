@@ -102,4 +102,4 @@ jobs:
         path: dist-newstyle
         fail-on-cache-miss: true
     - name: Run Tests
-      run: cabal test all
+      run: ${{env.CABAL}} test all
