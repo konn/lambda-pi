@@ -1,6 +1,9 @@
 on: push
 name: Build and Test
 
+env:
+  CABAL: cabal --project-file=cabal-ci.project
+
 jobs:
   build:
     name: Build
@@ -41,7 +44,7 @@ jobs:
     - run: cabal update
     - name: Build dependencies
       run: |
-        cabal build --only-dependencies --enable-tests --enable-benchmarks
+        ${CABAL} build --only-dependencies all
 
     - name: Save ~/.cabal/store
       uses: actions/cache/save@v3
@@ -52,7 +55,7 @@ jobs:
 
     - name: Build All
       id: build
-      run: cabal build --enable-tests --enable-benchmarks
+      run: ${CABAL} build all
 
     - name: Save ./dist-newstyle
       if: ${{ steps.build.conclusion == 'success' }}
