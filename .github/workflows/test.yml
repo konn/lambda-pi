@@ -8,6 +8,9 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v3
+    - name: Set file hash
+      run: |
+        echo 'FILE_HASH=${{hashFiles("**/*.hs")}}' >> ${GITHUB_ENV}
     - name: Restore ~/.cabal/store
       uses: actions/cache/restore@v3
       with:
@@ -24,9 +27,9 @@ jobs:
       with:
         path: dist-newstyle
         key: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-${{github.sha}}
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ env.FILE_HASH }}-${{github.sha}}
         restore-keys: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ env.FILE_HASH }}-
           ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-
           ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-
           ubuntu-9.2.8-dist-newstyle-
@@ -57,7 +60,7 @@ jobs:
       with:
         path: dist-newstyle
         key: |
-          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ hashFiles('**/*.hs') }}-${{github.sha}}
+          ubuntu-9.2.8-dist-newstyle-${{hashFiles('cabal.project.freeze')}}-${{ hashFiles('package.yaml', '**/*.cabal') }}-${{ env.FILE_HASH }}-${{github.sha}}
 
   test:
     name: Run Tests
