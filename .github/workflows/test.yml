@@ -1,16 +1,9 @@
 on: push
 name: Build and Test
-
-env:
-  CABAL: cabal --project-file=cabal-ci.project
-
 jobs:
   build:
     name: Build
     runs-on: ubuntu-22.04
-    outputs:
-      store-cache-key: ${{ steps.calc-cache-keys.outputs.store-cache-key}}
-      dist-cache-key: ${{ steps.calc-cache-keys.outputs.dist-cache-key}}
     steps:
     - name: Checkout
       uses: actions/checkout@v3
@@ -24,31 +17,26 @@ jobs:
         PACKAGE_FILE_HASH=${{ hashFiles('package.yaml', '**/*.cabal') }}
         echo "PACKAGE_FILE_HASH=${PACKAGE_FILE_HASH}" >> "${GITHUB_ENV}"
 
-        STORE_CACHE_KEY="ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${{github.sha}}"
+        STORE_CACHE_KEY="ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}"
         echo "store-cache-key=${STORE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
         
-        DIST_CACHE_KEY="ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}-${{github.sha}}"
+        DIST_CACHE_KEY="ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}"
         echo "dist-cache-key=${DIST_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
-
     - name: Restore ~/.cabal/store
       uses: actions/cache/restore@v3
       with:
         path: ~/.cabal/store
-        key: |
-          ${{steps.calc-cache-keys.outputs.store-cache-key}}
+        key: ${{steps.calc-cache-keys.outputs.store-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-cabal-store-${{env.FREEZE_FILE_HASH}}-${{env.PACKAGE_FILE_HASH}}-
-          ubuntu-9.2.8-cabal-store-${{env.FREEZE_FILE_HASH}}-
+          ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-
           ubuntu-9.2.8-cabal-store-
 
     - name: Restore ./dist-newstyle
       uses: actions/cache/restore@v3
       with:
         path: dist-newstyle
-        key: |
-          ${{steps.calc-cache-keys.outputs.dist-cache-key}}
+        key: ${{steps.calc-cache-keys.outputs.dist-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}-
           ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-
           ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-
           ubuntu-9.2.8-dist-newstyle-
@@ -57,20 +45,20 @@ jobs:
       with:
         cabal-version: 3.10.1.0
         ghc-version: 9.2.8
-    - run: ${CABAL} update
+    - run: cabal update
     - name: Build dependencies
       run: |
-        ${CABAL} build --only-dependencies all
+        cabal build --only-dependencies --enable-tests --enable-benchmarks
 
     - name: Save ~/.cabal/store
       uses: actions/cache/save@v3
       with:
         path: ~/.cabal/store
-        key:  ${{steps.calc-cache-keys.outputs.store-cache-key}}
+        key: ${{steps.calc-cache-keys.outputs.store-cache-key}}
 
     - name: Build All
       id: build
-      run: ${CABAL} build all
+      run: cabal build --enable-tests --enable-benchmarks
 
     - name: Save ./dist-newstyle
       if: ${{ steps.build.conclusion == 'success' }}
@@ -79,28 +67,51 @@ jobs:
         path: dist-newstyle
         key: ${{steps.calc-cache-keys.outputs.dist-cache-key}}
 
+    - name: Collect binaries
+      shell: bash
+      run: |
+        set -euxo pipefail
+        wget https://github.com/haskell-hvr/cabal-plan/releases/download/v0.7.3.0/cabal-plan-0.7.3.0-x86_64-linux.xz
+        xz -d <cabal-plan-0.7.3.0-x86_64-linux.xz >./cabal-plan
+        chmod +x ./cabal-plan
+        BIN_DIR=artifacts/bin
+        TEST_DIR=artifacts/test
+        BENCH_DIR=artifacts/bench
+        mkdir -p "${BIN_DIR}" "${TEST_DIR}" "${BENCH_DIR}"
+        ./cabal-plan list-bins --hide-setup --hide-global --hide-builtin \
+          | grep -e lambda-pi | grep -e lambda-pi |  while read -r COMP_TARGET; do
+            COMP=$(echo "${COMP_TARGET}" | gawk '{print $1}')
+            TARGET=$(echo "${COMP_TARGET}" | gawk '{print $2}')
+            if [[ "${COMP}" =~ :test: ]]; then 
+              cp "${TARGET}" "${TEST_DIR}/"
+            elif [[ "${COMP}" =~ :bench: ]]; then 
+              cp "${TARGET}" "${BENCH_DIR}/"
+            else
+              cp "${TARGET}" "${BIN_DIR}/"
+            fi
+        done
+        tar -caf artifacts.tar.zst artifacts/
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        path: artifacts.tar.zst
+        name: binaries
+
   test:
     name: Run Tests
     runs-on: ubuntu-22.04
     needs: build
     steps:
     - uses: actions/checkout@v3
-    - name: Setup Haskell
-      uses: haskell/actions/setup@v2
-      with:
-        cabal-version: 3.10.1.0
-        ghc-version: 9.2.8
-    - name: Restore ~/.cabal/store
-      uses: actions/cache/restore@v3
-      with:
-        path: ~/.cabal/store
-        key: ${{ needs.build.outputs.store-cache-key }}
-        fail-on-cache-miss: true
-    - name: Restore Test Cache
-      uses: actions/cache/restore@v3
-      with:
-        key: ${{ needs.build.outputs.dist-cache-key }}
-        path: dist-newstyle
-        fail-on-cache-miss: true
+    - name: Download Artifacts
+      uses: actions/download-artifact@v3
+    - name: Decompress
+      run: tar xaf binaries/artifacts.tar.zst
     - name: Run Tests
-      run: ${{env.CABAL}} test all
+      run: |
+        set -euxo pipefail
+        find ./artifacts/test -type f | while read -r TEST; do
+          chmod +x "${TEST}"
+          "${TEST}" +RTS -N4
+        done
