@@ -88,18 +88,6 @@ toInferable = \case
     Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toInferable b
-  Vec NoExtField a n -> Vec NoExtField <$> toCheckable a <*> toCheckable n
-  Nil NoExtField a -> Nil NoExtField <$> toCheckable a
-  Cons NoExtField a n x xs ->
-    Cons NoExtField <$> toCheckable a <*> toCheckable n <*> toCheckable x <*> toCheckable xs
-  VecElim NoExtField x t base step n xs ->
-    VecElim NoExtField
-      <$> toCheckable x
-      <*> toCheckable t
-      <*> toCheckable base
-      <*> toCheckable step
-      <*> toCheckable n
-      <*> toCheckable xs
   Record NoExtField (RecordFieldTypes flds) ->
     Record NoExtField . RecordFieldTypes <$> mapM (mapM toCheckable) flds
   MkRecord NoExtField (MkRecordFields flds) ->
@@ -145,18 +133,6 @@ toCheckable = \case
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toCheckable b
       <|> fmap inf . Let NoExtField v <$> toInferable e <*> toInferable b
-  Vec NoExtField a n -> fmap inf . Vec NoExtField <$> toCheckable a <*> toCheckable n
-  Nil NoExtField a -> inf . Nil NoExtField <$> toCheckable a
-  Cons NoExtField a n x xs ->
-    fmap (fmap $ fmap inf) . Cons NoExtField <$> toCheckable a <*> toCheckable n <*> toCheckable x <*> toCheckable xs
-  VecElim NoExtField x t base step n xs ->
-    fmap (fmap $ fmap $ fmap $ fmap inf) . VecElim NoExtField
-      <$> toCheckable x
-      <*> toCheckable t
-      <*> toCheckable base
-      <*> toCheckable step
-      <*> toCheckable n
-      <*> toCheckable xs
   Record NoExtField (RecordFieldTypes flds) ->
     inf . Record NoExtField . RecordFieldTypes <$> mapM (mapM toCheckable) flds
   MkRecord NoExtField (MkRecordFields flds) ->
@@ -224,9 +200,6 @@ lookupName (XName (Local i)) ctx =
   ctx ^? #locals . ix i . to (`VarInfo` Nothing)
 lookupName (Global _ t) ctx = ctx ^? #globals . ix t
 lookupName _ _ = Nothing
-
-pattern VNat :: Value
-pattern VNat = VNeutral (NFree VStar (PrimName NoExtField Nat))
 
 typeCheck :: HasCallStack => Int -> Context -> Expr Checkable -> Type -> Result (Expr Eval)
 typeCheck i ctx (XExpr (Inf e)) ty = do
@@ -394,10 +367,6 @@ typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c
 typeCheck _ _ (Pi c _ _ _) _ = noExtCon c
 typeCheck _ _ (App c _ _) _ = noExtCon c
-typeCheck _ _ (Vec c _ _) _ = noExtCon c
-typeCheck _ _ (Nil c _) _ = noExtCon c
-typeCheck _ _ (Cons c _ _ _ _) _ = noExtCon c
-typeCheck _ _ (VecElim c _ _ _ _ _ _) _ = noExtCon c
 typeCheck _ _ (Record c _) _ = noExtCon c
 typeCheck _ _ (Variant c _) _ = noExtCon c
 
@@ -476,45 +445,6 @@ typeInfer i ctx (Let NoExtField mv e b) = do
         (addLocal i vty ctx)
         (substBVar 0 (XName $ Local i) b)
   pure (ty, Let ty mv e' b')
-typeInfer i ctx (Vec NoExtField a k) =
-  fmap (VStar,) . Vec NoExtField <$> typeCheck i ctx a VStar <*> typeCheck i ctx k VNat
-typeInfer i ctx (Nil NoExtField a) = do
-  a' <- typeCheck i ctx a VStar
-  let retTy = VVec (eval (toEvalContext ctx) a') vZero
-  pure (retTy, Nil NoExtField a')
-typeInfer i ctx (Cons NoExtField a n x xs) = do
-  a' <- typeCheck i ctx a VStar
-  n' <- typeCheck i ctx n VNat
-  let ctx' = toEvalContext ctx
-      aVal = eval ctx' a'
-      nVal = eval ctx' n'
-  x' <- typeCheck i ctx x aVal
-  xs' <- typeCheck i ctx xs $ VVec aVal nVal
-  pure (VVec aVal $ vSucc @@ nVal, Cons NoExtField a' n' x' xs')
-typeInfer i ctx (VecElim NoExtField a m mnil mcons n vs) = do
-  let ctx' = toEvalContext ctx
-  a' <- typeCheck i ctx a VStar
-  let !aVal = eval ctx' a'
-  m' <- typeCheck i ctx m $
-    VPi (AlphaName "k") VNat $ \k ->
-      VPi Anonymous (VVec aVal k) $ const VStar
-  let !mVal = eval ctx' m'
-  !mnil' <-
-    typeCheck i ctx mnil $
-      vapps [mVal, vZero, VNil aVal]
-  !mcons' <- typeCheck i ctx mcons $
-    VPi (AlphaName "k") VNat $ \k ->
-      VPi (AlphaName "y") aVal $ \y ->
-        VPi (AlphaName "ys") (VVec aVal k) $ \ys ->
-          VPi Anonymous (vapps [mVal, k, ys]) $
-            const $
-              vapps [mVal, vSucc @@ k, VCons aVal k y ys]
-  !n' <- typeCheck i ctx n VNat
-  let !nVal = eval ctx' n'
-  vs' <- typeCheck i ctx vs $ VVec aVal nVal
-  let !vsVal = eval ctx' vs'
-      !retTy = vapps [mVal, nVal, vsVal]
-  pure (retTy, VecElim retTy a' m' mnil' mcons' n' vs')
 typeInfer i ctx (Record NoExtField flds) =
   (VStar,) . Record NoExtField . RecordFieldTypes
     <$> traverse (traverse $ flip (typeCheck i ctx) VStar) (recFieldTypes flds)
@@ -642,12 +572,6 @@ substBVar !i r (Pi c mv ann body) =
   Pi c mv (substBVar i r ann) (substBVar (i + 1) r body)
 substBVar !i r (Let NoExtField mv e b) =
   Let NoExtField mv (substBVar i r e) $ substBVar (i + 1) r b
-substBVar i r (Vec c a n) = Vec c (substBVar i r a) (substBVar i r n)
-substBVar i r (Nil c a) = Nil c $ substBVar i r a
-substBVar i r (Cons c a n x xs) =
-  Cons c (substBVar i r a) (substBVar i r n) (substBVar i r x) (substBVar i r xs)
-substBVar i r (VecElim c a t b ih n xs) =
-  VecElim c (substBVar i r a) (substBVar i r t) (substBVar i r b) (substBVar i r ih) (substBVar i r n) (substBVar i r xs)
 substBVar i r (Record c (RecordFieldTypes flds)) =
   Record c $ RecordFieldTypes $ map (fmap (substBVar i r)) flds
 substBVar i r (MkRecord c (MkRecordFields flds)) =
@@ -773,48 +697,6 @@ type instance LetName (Typing _) = AlphaName
 type instance LetRHS (Typing _) = Expr Inferable
 
 type instance LetBody (Typing e) = Expr (Typing e)
-
-type instance XVec Inferable = NoExtField
-
-type instance XVec Checkable = NoExtCon
-
-type instance VecType (Typing _) = Expr Checkable
-
-type instance VecLength (Typing _) = Expr Checkable
-
-type instance XNil Inferable = NoExtField
-
-type instance XNil Checkable = NoExtCon
-
-type instance NilType (Typing _) = Expr Checkable
-
-type instance XCons Inferable = NoExtField
-
-type instance XCons Checkable = NoExtCon
-
-type instance ConsType (Typing _) = Expr Checkable
-
-type instance ConsLength (Typing _) = Expr Checkable
-
-type instance ConsHead (Typing _) = Expr Checkable
-
-type instance ConsTail (Typing _) = Expr Checkable
-
-type instance XVecElim Inferable = NoExtField
-
-type instance XVecElim Checkable = NoExtCon
-
-type instance VecElimEltType (Typing _) = Expr Checkable
-
-type instance VecElimRetFamily (Typing _) = Expr Checkable
-
-type instance VecElimBaseCase (Typing _) = Expr Checkable
-
-type instance VecElimInductiveStep (Typing _) = Expr Checkable
-
-type instance VecElimLength (Typing _) = Expr Checkable
-
-type instance VecElimInput (Typing _) = Expr Checkable
 
 type instance XRecord Inferable = NoExtField
 

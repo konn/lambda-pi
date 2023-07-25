@@ -80,22 +80,6 @@ renameExprM = \case
     Let NoExtField (AlphaName v)
       <$> renameExprM e
       <*> abstract v (renameExprM body)
-  Vec NoExtField x n -> Vec NoExtField <$> renameExprM x <*> renameExprM n
-  Nil NoExtField x -> Nil NoExtField <$> renameExprM x
-  Cons NoExtField t n x xs ->
-    Cons NoExtField
-      <$> renameExprM t
-      <*> renameExprM n
-      <*> renameExprM x
-      <*> renameExprM xs
-  VecElim NoExtField x t base step n xs ->
-    VecElim NoExtField
-      <$> renameExprM x
-      <*> renameExprM t
-      <*> renameExprM base
-      <*> renameExprM step
-      <*> renameExprM n
-      <*> renameExprM xs
   Record NoExtField (RecordFieldTypes fs) ->
     Record NoExtField . RecordFieldTypes
       <$> mapM (mapM renameExprM) fs
@@ -175,40 +159,6 @@ type instance LetName Rename = AlphaName
 type instance LetRHS Rename = Expr Rename
 
 type instance LetBody Rename = Expr Rename
-
-type instance XVec Rename = NoExtField
-
-type instance VecType Rename = Expr Rename
-
-type instance VecLength Rename = Expr Rename
-
-type instance XNil Rename = NoExtField
-
-type instance NilType Rename = Expr Rename
-
-type instance XCons Rename = NoExtField
-
-type instance ConsType Rename = Expr Rename
-
-type instance ConsLength Rename = Expr Rename
-
-type instance ConsHead Rename = Expr Rename
-
-type instance ConsTail Rename = Expr Rename
-
-type instance XVecElim Rename = NoExtField
-
-type instance VecElimEltType Rename = Expr Rename
-
-type instance VecElimRetFamily Rename = Expr Rename
-
-type instance VecElimBaseCase Rename = Expr Rename
-
-type instance VecElimInductiveStep Rename = Expr Rename
-
-type instance VecElimLength Rename = Expr Rename
-
-type instance VecElimInput Rename = Expr Rename
 
 type instance XRecord Rename = NoExtField
 

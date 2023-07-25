@@ -17,11 +17,6 @@ inputCases :: [(String, Expr Parse)]
 inputCases =
   [ ("Nat : Type", Ann NoExtField nat star)
   , ("(Nat : Type)", Ann NoExtField nat star)
-  ,
-    ( "Vec Nat 0"
-    , apps [vecCon', nat, zero]
-    )
-  , ("(Vec Nat 0)", apps [vecCon', nat, zero])
   , ("Nat", nat)
   , ("(Nat)", nat)
   , ("((Nat))", nat)
@@ -34,9 +29,6 @@ inputCases =
   , ("(Nat -> Nat) -> Nat", (nat :~> nat) :~> nat)
   , ("((Nat -> Nat) -> Nat)", (nat :~> nat) :~> nat)
   , ("natElim", natElim')
-  , ("Vec Nat 5", vecNat5)
-  , ("(Vec Nat) 5", vecNat5)
-  , ("(Vec Nat 5)", vecNat5)
   , ("x", var "x")
   , ("(x)", var "x")
   , ("λ x. x", Lam NoExtField "x" Nothing (var "x"))
@@ -131,39 +123,6 @@ natElim' = Var NoExtField $ PrimName NoExtField NatElim
 succ' :: ParsedExpr -> Expr Parse
 succ' = App NoExtField succCon
 
-vecElim' :: ParsedExpr
-vecElim' =
-  Lam NoExtField "a" (Just star)
-    $ Lam
-      NoExtField
-      "t"
-      ( Just $
-          Pi NoExtField (DepNamed "n") nat $
-            Pi
-              NoExtField
-              Indep
-              (Vec NoExtField (var "a") (var "n"))
-              star
-      )
-    $ Lam
-      NoExtField
-      "base"
-      ( Just $ apps [var "t", zero, Nil NoExtField (var "a")]
-      )
-    $ Lam
-      NoExtField
-      "ind"
-      ( Just $
-          Pi NoExtField (DepNamed "n") nat $
-            Pi NoExtField (DepNamed "x") (var "a") $
-              Pi NoExtField (DepNamed "xs") (Vec NoExtField (var "a") (var "n")) $
-                Pi NoExtField Indep (apps [var "t", var "n", var "xs"]) $
-                  apps [var "t", App NoExtField succCon (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
-      )
-    $ Lam NoExtField "n" (Just nat)
-    $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
-    $ apps [var "t", var "n", var "xs"]
-
 apps :: [ParsedExpr] -> Expr Parse
 apps = foldl1' (App NoExtField)
 
@@ -179,9 +138,6 @@ nat = Var NoExtField $ PrimName NoExtField Nat
 star :: Expr Parse
 star = Star NoExtField
 
-vecCon' :: ParsedExpr
-vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField $ Global NoExtField "t") (Var NoExtField $ Global NoExtField "n")
-
 pattern (:~>) :: ParsedExpr -> ParsedExpr -> ParsedExpr
 pattern (:~>) l r = Pi NoExtField Indep l r
 
@@ -194,9 +150,6 @@ pattern Lam' ::
 pattern Lam' t u v = Lam NoExtField t u v
 
 infixr 0 :~>
-
-vecNat5 :: Expr Parse
-vecNat5 = apps [vecCon', nat, succ' (succ' (succ' (succ' (succ' zero))))]
 
 var :: Text -> ParsedExpr
 var = Var NoExtField . Global NoExtField

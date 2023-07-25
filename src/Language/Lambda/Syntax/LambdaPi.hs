@@ -83,29 +83,6 @@ module Language.Lambda.Syntax.LambdaPi (
   LetRHS,
   LetBody,
 
-  -- *** Vectors
-  XVec,
-  VecType,
-  VecLength,
-
-  -- **** Constructors
-  XNil,
-  NilType,
-  XCons,
-  ConsType,
-  ConsLength,
-  ConsHead,
-  ConsTail,
-
-  -- **** Elminator
-  XVecElim,
-  VecElimEltType,
-  VecElimRetFamily,
-  VecElimBaseCase,
-  VecElimInductiveStep,
-  VecElimLength,
-  VecElimInput,
-
   -- *** Records
   XRecord,
   RecordFieldTypes (..),
@@ -214,17 +191,6 @@ data Expr phase
   | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
   | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
-  | Vec (XVec phase) (VecType phase) (VecLength phase)
-  | Nil (XNil phase) (NilType phase)
-  | Cons (XCons phase) (ConsType phase) (ConsLength phase) (ConsHead phase) (ConsTail phase)
-  | VecElim
-      (XVecElim phase)
-      (VecElimEltType phase)
-      (VecElimRetFamily phase)
-      (VecElimBaseCase phase)
-      (VecElimInductiveStep phase)
-      (VecElimLength phase)
-      (VecElimInput phase)
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
   | ProjField (XProjField phase) (ProjFieldRecord phase) Text
@@ -392,40 +358,6 @@ type family LetName p
 type family LetRHS p
 
 type family LetBody p
-
-type family XVec p
-
-type family VecType p
-
-type family VecLength p
-
-type family XNil p
-
-type family NilType p
-
-type family XCons p
-
-type family ConsType p
-
-type family ConsLength p
-
-type family ConsHead p
-
-type family ConsTail p
-
-type family XVecElim p
-
-type family VecElimEltType p
-
-type family VecElimRetFamily p
-
-type family VecElimBaseCase p
-
-type family VecElimInductiveStep p
-
-type family VecElimLength p
-
-type family VecElimInput p
 
 type family XRecord p
 
@@ -627,19 +559,6 @@ instance
   , VarLike (LetName phase)
   , Pretty PrettyEnv (LetRHS phase)
   , Pretty PrettyEnv (LetBody phase)
-  , Pretty PrettyEnv (VecType phase)
-  , Pretty PrettyEnv (VecLength phase)
-  , Pretty PrettyEnv (NilType phase)
-  , Pretty PrettyEnv (ConsType phase)
-  , Pretty PrettyEnv (ConsLength phase)
-  , Pretty PrettyEnv (ConsHead phase)
-  , Pretty PrettyEnv (ConsTail phase)
-  , Pretty PrettyEnv (VecElimEltType phase)
-  , Pretty PrettyEnv (VecElimRetFamily phase)
-  , Pretty PrettyEnv (VecElimBaseCase phase)
-  , Pretty PrettyEnv (VecElimInductiveStep phase)
-  , Pretty PrettyEnv (VecElimLength phase)
-  , Pretty PrettyEnv (VecElimInput phase)
   , Pretty PrettyEnv (RecordFieldType phase)
   , Pretty PrettyEnv (RecordField phase)
   , Pretty PrettyEnv (ProjFieldRecord phase)
@@ -713,20 +632,6 @@ instance
       , "in" <+> instantiate var (pretty e)
       ]
   -- FIXME: compress numerals
-  pretty (Vec _ a n) =
-    text "Vec" <@> pretty a <@> pretty n
-  pretty (Nil _ a) =
-    text "nil" <@> pretty a
-  pretty (Cons _ a n x xs) =
-    text "cons" <@> pretty a <@> pretty n <@> pretty x <@> pretty xs
-  pretty (VecElim _ a t b i n xs) =
-    text "vecElim"
-      <@> pretty a
-      <@> pretty t
-      <@> pretty b
-      <@> pretty i
-      <@> pretty n
-      <@> pretty xs
   pretty (Record _ (RecordFieldTypes flds)) =
     braces $
       sep $

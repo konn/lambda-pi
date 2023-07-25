@@ -72,9 +72,6 @@ data Value
   = VLam LambdaTypeSpec AlphaName (Value -> Value)
   | VStar
   | VPi AlphaName Value (Value -> Value)
-  | VVec Value Value
-  | VNil Value
-  | VCons Value Value Value Value
   | VRecord (HashMap Text Value)
   | VMkRecord (HashMap Text Type) (HashMap Text Value)
   | VVariant (HashMap Text Value)
@@ -92,9 +89,6 @@ instance NFData Value where
   rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun (lamArgType lts) b
   rnf (VPi an a b) = an `deepseq` a `deepseq` rnfTyFun a b
   rnf VStar = ()
-  rnf (VVec a n) = a `deepseq` rnf n
-  rnf (VNil a) = rnf a
-  rnf (VCons a n x xs) = a `deepseq` n `deepseq` x `deepseq` rnf xs
   rnf (VRecord flds) = rnf flds
   rnf (VMkRecord fldTys flds) = fldTys `deepseq` rnf flds
   rnf (VVariant tags) = rnf tags
@@ -105,9 +99,6 @@ typeOf :: Value -> Type
 typeOf (VLam LambdaTypeSpec {..} x _) = VPi x lamArgType lamBodyType
 typeOf VStar = VStar
 typeOf VPi {} = VStar
-typeOf VVec {} = VStar
-typeOf (VNil a) = VVec a vZero
-typeOf (VCons a n _ _) = VVec a (VNeutral nSucc @@ n)
 typeOf VRecord {} = VStar
 typeOf (VMkRecord fldTys _) = VRecord fldTys
 typeOf VVariant {} = VStar
@@ -138,7 +129,6 @@ instance Pretty e (Expr Eval) => Pretty e Value where
 data Neutral
   = NFree Type (Name Eval)
   | NApp Type Neutral Value
-  | NVecElim Type Value Value Value Value Value Neutral
   | NProjField Type Neutral Text
   | NCase CaseTypeInfo Neutral (HM.HashMap Text (Value -> Value))
   -- FIXME: Work out what NOpen should be
@@ -147,8 +137,6 @@ data Neutral
 instance NFData Neutral where
   rnf (NFree ty n) = ty `deepseq` rnf n
   rnf (NApp ty l r) = ty `deepseq` l `deepseq` rnf r
-  rnf (NVecElim ty a t b i n xs) =
-    ty `deepseq` a `deepseq` t `deepseq` b `deepseq` i `deepseq` n `deepseq` rnf xs
   rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
   rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap (rnfTyFun VStar) xs)
 
@@ -166,7 +154,6 @@ inferPrim NatElim = natElimType
 typeOfNeutral :: Neutral -> Type
 typeOfNeutral (NFree retTy _) = retTy
 typeOfNeutral (NApp retTy _ _) = retTy
-typeOfNeutral (NVecElim retTy _ _ _ _ _ _) = retTy
 typeOfNeutral (NProjField retTy _ _) = retTy
 typeOfNeutral (NCase CaseTypeInfo {..} _ _) = caseRetTy
 
@@ -197,10 +184,6 @@ quote i (VLam ls@LambdaTypeSpec {..} mv f) =
           XName $
             Quote i
 quote _ VStar = Star NoExtField
-quote i (VVec a n) = Vec NoExtField (quote i a) (quote i n)
-quote i (VNil a) = Nil NoExtField (quote i a)
-quote i (VCons a n x xs) =
-  Cons NoExtField (quote i a) (quote i n) (quote i x) (quote i xs)
 quote i (VPi mv v f) =
   Pi NoExtField mv (quote i v) $
     quote (i + 1) $
@@ -230,9 +213,6 @@ quote i (VInj alts l e) =
 quoteNeutral :: Int -> Neutral -> Expr Eval
 quoteNeutral i (NFree ty x) = boundFree ty i x
 quoteNeutral i (NApp ty n v) = App ty (quoteNeutral i n) (quote i v)
-quoteNeutral i (NVecElim ty a m mz ms k xs) =
-  VecElim ty (quote i a) (quote i m) (quote i mz) (quote i ms) (quote i k) $
-    quoteNeutral i xs
 quoteNeutral i (NProjField ty r f) =
   ProjField ty (quoteNeutral i r) f
 quoteNeutral i (NCase ty@CaseTypeInfo {..} v alts) =
@@ -277,12 +257,6 @@ eval ctx (Let _ _ e b) =
   eval
     (ctx & #boundValues %~ (eval ctx e <|))
     b
-eval ctx (Vec _ a n) = VVec (eval ctx a) (eval ctx n)
-eval ctx (Nil _ a) = VNil $ eval ctx a
-eval ctx (Cons _ a k v vk) =
-  VCons (eval ctx a) (eval ctx k) (eval ctx v) (eval ctx vk)
-eval ctx (VecElim ty a m mnil mcons k vk) =
-  evalVecElim ty (eval ctx a) (eval ctx m) (eval ctx mnil) (eval ctx mcons) (eval ctx k) (eval ctx vk)
 eval ctx (Record _ flds) = VRecord $ HM.fromList $ map (Bi.second $ eval ctx) $ recFieldTypes flds
 eval ctx (MkRecord fldTys recs) =
   VMkRecord fldTys $ HM.fromList $ map (Bi.second $ eval ctx) $ mkRecFields recs
@@ -346,16 +320,6 @@ natElimType =
         $ \_step ->
           VPi (AlphaName "k") VNat $ \k -> t @@ k
 
-evalVecElim :: Type -> Value -> Value -> Value -> Value -> Value -> Value -> Value
-evalVecElim retTy aVal mVal mnilVal mconsVal =
-  fix $ \recur kVal xsVal ->
-    case xsVal of
-      VNil _ -> mnilVal
-      VCons _ l x xs -> vapps [mconsVal, l, x, xs, recur l xs]
-      VNeutral n ->
-        VNeutral $ NVecElim retTy aVal mVal mnilVal mconsVal kVal n
-      _ -> error "Impossible: non-evaluatable VecElim case."
-
 evalProjField :: Type -> Text -> Value -> Value
 evalProjField retTy f =
   \case
@@ -418,24 +382,6 @@ unsubstBVar i = flip runReader 0 . go
     go (Let c mn e v) =
       Let <$> unsubstBVarValM i c <*> pure mn <*> go e <*> local (+ 1) (go v)
     go s@Star {} = pure s
-    go (Vec NoExtField x n) =
-      Vec NoExtField <$> go x <*> go n
-    go (Nil NoExtField c) = Nil NoExtField <$> go c
-    go (Cons NoExtField ty n x xs) =
-      Cons NoExtField
-        <$> go ty
-        <*> go n
-        <*> go x
-        <*> go xs
-    go (VecElim ty x t tNil tCons n xs) =
-      VecElim
-        <$> unsubstBVarValM i ty
-        <*> go x
-        <*> go t
-        <*> go tNil
-        <*> go tCons
-        <*> go n
-        <*> go xs
     go (Record NoExtField (RecordFieldTypes flds)) =
       Record NoExtField . RecordFieldTypes <$> mapM (mapM go) flds
     go (MkRecord tys (MkRecordFields flds)) =
@@ -490,10 +436,6 @@ unsubstBVarValM i = go
         <$> unsubstLamTy i lt
         <*> pure name
         <*> pure (unsubstBVarValToM (lvl + 1) i . f)
-    go (VVec a n) = VVec <$> go a <*> go n
-    go (VNil ty) = VNil <$> go ty
-    go (VCons a n x xs) =
-      VCons <$> go a <*> go n <*> go x <*> go xs
     go (VRecord flds) = VRecord <$> mapM go flds
     go (VMkRecord fldTys flds) =
       VMkRecord <$> mapM go fldTys <*> mapM go flds
@@ -516,15 +458,6 @@ unsubstBoundNeutral i = go
         <$> unsubstBVarValM i ty
         <*> go l
         <*> unsubstBVarValM i v
-    go (NVecElim ty x t t0 tsucc n xs) =
-      NVecElim
-        <$> unsubstBVarValM i ty
-        <*> unsubstBVarValM i x
-        <*> unsubstBVarValM i t
-        <*> unsubstBVarValM i t0
-        <*> unsubstBVarValM i tsucc
-        <*> unsubstBVarValM i n
-        <*> go xs
     go (NProjField ty p l) =
       NProjField <$> unsubstBVarValM i ty <*> go p <*> pure l
     go (NCase ty scr alts) = do
@@ -546,10 +479,6 @@ substBound i v (VPi mv va f) =
   VPi mv (substBound i v va) $ substBound i v . f
 substBound i v (VNeutral neu) =
   either VNeutral (substBound i v) $ substBoundNeutral i v neu
-substBound i v (VVec va va') = VVec (substBound i v va) (substBound i v va')
-substBound i v (VNil va) = VNil $ substBound i v va
-substBound i v (VCons va va' va2 va3) =
-  VCons (substBound i v va) (substBound i v va') (substBound i v va2) (substBound i v va3)
 substBound i v (VRecord flds) = VRecord $ fmap (substBound i v) flds
 substBound i v (VMkRecord fldTy flds) = VMkRecord (substBound i v <$> fldTy) $ substBound i v <$> flds
 substBound i v (VVariant flds) = VVariant $ fmap (substBound i v) flds
@@ -571,17 +500,6 @@ substBoundNeutral i v (NApp retTy0 neu' va) =
       retTy = substBound i v retTy0
    in Bi.bimap (\vf' -> NApp retTy vf' va) (@@ va') $
         substBoundNeutral i v neu'
-substBoundNeutral i v (NVecElim retTy0 a f fnil fcons k kv) =
-  let aVal = substBound i v a
-      fVal = substBound i v f
-      fnilVal = substBound i v fnil
-      fconsVal = substBound i v fcons
-      kVal = substBound i v k
-      retTy = substBound i v retTy0
-   in Bi.bimap
-        (NVecElim retTy aVal fVal fnilVal fconsVal kVal)
-        (evalVecElim retTy aVal fVal fnilVal fconsVal kVal)
-        $ substBoundNeutral i v kv
 substBoundNeutral i v (NProjField retTy0 r f) =
   let retTy = substBound i v retTy0
    in case substBoundNeutral i v r of
@@ -689,40 +607,6 @@ type instance LetName Eval = AlphaName
 type instance LetRHS Eval = Expr Eval
 
 type instance LetBody Eval = Expr Eval
-
-type instance XVec Eval = NoExtField
-
-type instance VecType Eval = Expr Eval
-
-type instance VecLength Eval = Expr Eval
-
-type instance XNil Eval = NoExtField
-
-type instance NilType Eval = Expr Eval
-
-type instance XCons Eval = NoExtField
-
-type instance ConsType Eval = Expr Eval
-
-type instance ConsLength Eval = Expr Eval
-
-type instance ConsHead Eval = Expr Eval
-
-type instance ConsTail Eval = Expr Eval
-
-type instance XVecElim Eval = Type
-
-type instance VecElimEltType Eval = Expr Eval
-
-type instance VecElimRetFamily Eval = Expr Eval
-
-type instance VecElimBaseCase Eval = Expr Eval
-
-type instance VecElimInductiveStep Eval = Expr Eval
-
-type instance VecElimLength Eval = Expr Eval
-
-type instance VecElimInput Eval = Expr Eval
 
 type instance XRecord Eval = NoExtField
 

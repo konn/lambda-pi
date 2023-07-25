@@ -30,12 +30,6 @@ infCases =
         VStar
         (\v -> VPi (AlphaName "a") v $ const v)
     )
-  ,
-    ( inf "λ(a: Type) (n: Nat). nil a"
-    , VPi (AlphaName "z") VStar $ \z ->
-        VPi (AlphaName "l") VNat $ \_ ->
-          VVec z vZero
-    )
   , (inf "natElim (λ n. ℕ) 3 (λ k. succ) 2", VNat)
   ,
     ( inf "λ(t: Nat -> Type) (step: Π(n: Nat). t n -> t (succ n)) (x: t 0). step 0 x"

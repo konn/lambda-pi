@@ -44,7 +44,6 @@ import Data.Data (Data)
 import Data.Functor
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HS
-import Data.List (foldl1')
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as Map
 import Data.Semigroup
@@ -182,41 +181,7 @@ annBinder =
 eliminatorsP :: Parser ParsedExpr
 eliminatorsP =
   Prim NatElim <$ reserved "natElim"
-    <|> vecElim' <$ reserved "vecElim"
     <|> try openP
-
-vecElim' :: ParsedExpr
-vecElim' =
-  Lam NoExtField "a" (Just star)
-    $ Lam
-      NoExtField
-      "t"
-      ( Just $
-          Pi NoExtField (DepNamed "n") nat $
-            Pi
-              NoExtField
-              Indep
-              (Vec NoExtField (var "a") (var "n"))
-              star
-      )
-    $ Lam
-      NoExtField
-      "base"
-      ( Just $ apps [var "t", zero, Nil NoExtField (var "a")]
-      )
-    $ Lam
-      NoExtField
-      "ind"
-      ( Just $
-          Pi NoExtField (DepNamed "n") nat $
-            Pi NoExtField (DepNamed "x") (var "a") $
-              Pi NoExtField (DepNamed "xs") (Vec NoExtField (var "a") (var "n")) $
-                Pi NoExtField Indep (apps [var "t", var "n", var "xs"]) $
-                  apps [var "t", Succ' (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
-      )
-    $ Lam NoExtField "n" (Just nat)
-    $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
-    $ apps [var "t", var "n", var "xs"]
 
 pattern Succ' :: Expr Parse -> Expr Parse
 pattern Succ' e = App NoExtField (Prim Succ) e
@@ -224,16 +189,11 @@ pattern Succ' e = App NoExtField (Prim Succ) e
 pattern Prim :: Prim -> Expr Parse
 pattern Prim p = Var NoExtField (PrimName NoExtField p)
 
-apps :: [ParsedExpr] -> Expr Parse
-apps = foldl1' (App NoExtField)
-
 dataConP :: Parser ParsedExpr
 dataConP =
   naturalP
-    <|> Lam NoExtField "t" (Just star) (Nil NoExtField (var "t")) <$ reserved "nil"
     <|> Prim Zero <$ reserved "zero"
     <|> Prim Succ <$ reserved "succ"
-    <|> cons' <$ reserved "cons"
     <|> recordP
     <|> varInjP
 
@@ -245,20 +205,6 @@ recordP =
       (symbol "{")
       (symbol "}")
       (MkRecordFields <$> fieldSeqP "field" (symbol ",") (symbol "="))
-
-cons' :: ParsedExpr
-cons' =
-  Lam
-    NoExtField
-    "t"
-    (Just star)
-    $ Lam NoExtField "n" (Just nat)
-    $ Lam NoExtField "x" (Just (var "t"))
-    $ Lam NoExtField "xs" (Just (Vec NoExtField (var "t") (var "n")))
-    $ Cons NoExtField (var "t") (var "n") (var "x") (var "xs")
-
-var :: Text -> ParsedExpr
-var = Var NoExtField . Global NoExtField
 
 naturalP :: Parser ParsedExpr
 naturalP =
@@ -274,11 +220,8 @@ zero = Prim Zero
 nat :: Expr Parse
 nat = Prim Nat
 
-star :: Expr Parse
-star = Star NoExtField
-
 compoundTyConP :: Parser ParsedExpr
-compoundTyConP = vecCon' <$ reserved "Vec" <|> recordTyP <|> variantTyP
+compoundTyConP = recordTyP <|> variantTyP
 
 recordTyP :: Parser ParsedExpr
 recordTyP = try (between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":")))
@@ -316,9 +259,6 @@ fieldSeqP tokenName sep fldSep = do
       "Following field(s) occurred more than once: "
         <> show dups
   pure flds
-
-vecCon' :: ParsedExpr
-vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField (Global NoExtField "t")) (Var NoExtField (Global NoExtField "n"))
 
 varP :: Parser ParsedExpr
 varP = Var NoExtField . Global NoExtField <$> identifier
@@ -462,40 +402,6 @@ type instance LetName Parse = Text
 type instance LetRHS Parse = Expr Parse
 
 type instance LetBody Parse = Expr Parse
-
-type instance XVec Parse = NoExtField
-
-type instance VecType Parse = Expr Parse
-
-type instance VecLength Parse = Expr Parse
-
-type instance XNil Parse = NoExtField
-
-type instance NilType Parse = Expr Parse
-
-type instance XCons Parse = NoExtField
-
-type instance ConsType Parse = Expr Parse
-
-type instance ConsLength Parse = Expr Parse
-
-type instance ConsHead Parse = Expr Parse
-
-type instance ConsTail Parse = Expr Parse
-
-type instance XVecElim Parse = NoExtField
-
-type instance VecElimEltType Parse = Expr Parse
-
-type instance VecElimRetFamily Parse = Expr Parse
-
-type instance VecElimBaseCase Parse = Expr Parse
-
-type instance VecElimInductiveStep Parse = Expr Parse
-
-type instance VecElimLength Parse = Expr Parse
-
-type instance VecElimInput Parse = Expr Parse
 
 type instance XRecord Parse = NoExtField
 
