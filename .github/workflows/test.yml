@@ -12,10 +12,13 @@ jobs:
       run: |
         HS_FILE_HASH=${{hashFiles('**/*.hs')}}
         echo "HS_FILE_HASH=${HS_FILE_HASH}" >> "${GITHUB_ENV}"
+        echo "source-hash=${HS_FILE_HASH}" >> "${GITHUB_OUTPUT}"
         FREEZE_FILE_HASH=${{hashFiles('cabal.project.freeze')}}
         echo "FREEZE_FILE_HASH=${FREEZE_FILE_HASH}" >> "${GITHUB_ENV}"
+        echo "project-hash=${FREEZE_FILE_HASH}" >> "${GITHUB_OUTPUT}"
         PACKAGE_FILE_HASH=${{ hashFiles('package.yaml', '**/*.cabal') }}
         echo "PACKAGE_FILE_HASH=${PACKAGE_FILE_HASH}" >> "${GITHUB_ENV}"
+        echo "package-hash=${PACKAGE_FILE_HASH}" >> "${GITHUB_OUTPUT}"
 
         STORE_CACHE_KEY="ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}"
         echo "store-cache-key=${STORE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
@@ -28,7 +31,7 @@ jobs:
         path: ~/.cabal/store
         key: ${{steps.calc-cache-keys.outputs.store-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-
+          ubuntu-9.2.8-cabal-store-${{steps.calc-cache-keys.outputs.project-hash}}-
           ubuntu-9.2.8-cabal-store-
 
     - name: Restore ./dist-newstyle
@@ -37,8 +40,8 @@ jobs:
         path: dist-newstyle
         key: ${{steps.calc-cache-keys.outputs.dist-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-
-          ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-
+          ubuntu-9.2.8-dist-newstyle-${{steps.calc-cache-keys.outputs.project-hash}}-${{steps.calc-cache-keys.outputs.package-hash}}-
+          ubuntu-9.2.8-dist-newstyle-${{steps.calc-cache-keys.outputs.project-hash}}-
           ubuntu-9.2.8-dist-newstyle-
     - name: Setup Haskell
       uses: haskell/actions/setup@v2
