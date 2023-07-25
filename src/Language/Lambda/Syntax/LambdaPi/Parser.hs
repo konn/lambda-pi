@@ -92,7 +92,7 @@ appSpaceP =
       )
 
 termP :: Parser ParsedExpr
-termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> caseP <|> lamP <|> varP <|> parens exprP
+termP = piP <|> sigmaP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> caseP <|> lamP <|> varP <|> parens exprP
 
 openP :: Parser ParsedExpr
 openP =
@@ -127,6 +127,15 @@ caseP =
         (symbol "}")
         (CaseAlts <$> (caseAltP `sepBy` symbol ";"))
 
+pairP :: Parser ParsedExpr
+pairP =
+  label "pair-expression" $
+    between (symbol "⟨") (symbol "⟩") $
+      Pair NoExtField
+        <$> exprP
+        <* symbol ","
+        <*> exprP
+
 caseAltP :: Parser (Text, CaseAlt Parse)
 caseAltP =
   (,)
@@ -143,6 +152,15 @@ piP = label "Pi-binding" $ do
   bindees <- sconcat <$> NE.some annBinder <* symbol "."
   foldr
     (\(v, ty) p -> Pi NoExtField (DepNamed v) ty <$> p)
+    exprP
+    bindees
+
+sigmaP :: Parser ParsedExpr
+sigmaP = label "Sigma-binding" $ do
+  reserved "Σ"
+  bindees <- sconcat <$> NE.some annBinder <* symbol "."
+  foldr
+    (\(v, ty) p -> Sigma NoExtField (DepNamed v) ty <$> p)
     exprP
     bindees
 
@@ -194,6 +212,7 @@ dataConP =
   naturalP
     <|> Prim Zero <$ reserved "zero"
     <|> Prim Succ <$ reserved "succ"
+    <|> pairP
     <|> recordP
     <|> varInjP
 
@@ -277,7 +296,7 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let", "case", "of"]
+keywords = HS.fromList ["λ", "Π", "Σ", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let", "case", "of"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'
@@ -394,6 +413,20 @@ type instance PiVarName Parse = DepName
 type instance PiVarType Parse = Expr Parse
 
 type instance PiRHS Parse = Expr Parse
+
+type instance XSigma Parse = NoExtField
+
+type instance SigmaVarName Parse = DepName
+
+type instance SigmaVarType Parse = Expr Parse
+
+type instance SigmaBody Parse = Expr Parse
+
+type instance XPair Parse = NoExtField
+
+type instance PairFst Parse = Expr Parse
+
+type instance PairSnd Parse = Expr Parse
 
 type instance XLet Parse = NoExtField
 

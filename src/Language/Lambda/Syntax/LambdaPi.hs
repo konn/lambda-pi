@@ -77,6 +77,17 @@ module Language.Lambda.Syntax.LambdaPi (
   PiVarType,
   PiRHS,
 
+  -- *** Sigma-types
+  XSigma,
+  SigmaVarName,
+  SigmaVarType,
+  SigmaBody,
+
+  -- **** Construction
+  XPair,
+  PairFst,
+  PairSnd,
+
   -- *** Let-expressions
   XLet,
   LetName,
@@ -190,6 +201,8 @@ data Expr phase
   | App (XApp phase) (AppLHS phase) (AppRHS phase)
   | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
+  | Sigma (XSigma phase) (SigmaVarName phase) (SigmaVarType phase) (SigmaBody phase)
+  | Pair (XPair phase) (PairFst phase) (PairSnd phase)
   | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
@@ -350,6 +363,20 @@ data DepName = Indep | DepAnon | DepNamed Text
 type family PiVarType p
 
 type family PiRHS p
+
+type family XSigma p
+
+type family SigmaVarName p
+
+type family SigmaVarType p
+
+type family XPair p
+
+type family PairFst p
+
+type family PairSnd p
+
+type family SigmaBody p
 
 type family XLet p
 
@@ -556,6 +583,12 @@ instance
   , HasBindeeType (PiVarType phase)
   , Pretty PrettyEnv (BindeeType (PiVarType phase))
   , Pretty PrettyEnv (PiRHS phase)
+  , VarLike (SigmaVarName phase)
+  , HasBindeeType (SigmaVarType phase)
+  , Pretty PrettyEnv (BindeeType (SigmaVarType phase))
+  , Pretty PrettyEnv (SigmaBody phase)
+  , Pretty PrettyEnv (PairFst phase)
+  , Pretty PrettyEnv (PairSnd phase)
   , VarLike (LetName phase)
   , Pretty PrettyEnv (LetRHS phase)
   , Pretty PrettyEnv (LetBody phase)
@@ -621,6 +654,30 @@ instance
       )
       2
       $ instantiate var (pretty body)
+  pretty (Sigma _ mv mp body) = withPrecParens 4 $ do
+    -- TODO: check occurrence of mv in body and
+    -- use arrows if absent!
+    let mArgTy = bindeeType mp
+    var <- fromMaybe "x" <$> varName mv
+    lvl <- views (#levels . at var) (fromMaybe 0)
+    let varN
+          | lvl > 0 = var <> "_" <> T.pack (show lvl)
+          | otherwise = var
+    hang
+      ( ( char 'Σ'
+            <+> appWhen
+              (isJust mArgTy)
+              parens
+              ( text varN <+> forM_ mArgTy \ty ->
+                  colon <+> pretty ty
+              )
+        )
+          <> char '.'
+      )
+      2
+      $ instantiate var (pretty body)
+  pretty (Pair _ l r) = do
+    "⟨" <+> pretty l <+> pretty r <+> "⟩"
   pretty (Let _ n b e) = do
     var <- fromMaybe "x" <$> varName n
     lvl <- views (#levels . at var) (fromMaybe 0)

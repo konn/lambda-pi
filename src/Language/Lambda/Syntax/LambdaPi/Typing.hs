@@ -86,6 +86,9 @@ toInferable = \case
     Lam NoExtField v <$> (toCheckable =<< minType) <*> toInferable body
   Pi NoExtField mv srcTy dstTy ->
     Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
+  Sigma NoExtField mv srcTy dstTy ->
+    Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
+  Pair {} -> Nothing
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toInferable b
   Record NoExtField (RecordFieldTypes flds) ->
@@ -130,6 +133,10 @@ toCheckable = \case
     Lam NoExtField mv Nothing <$> toCheckable body
   Pi NoExtField mv srcTy dstTy ->
     fmap inf . Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
+  Sigma NoExtField mv srcTy dstTy ->
+    fmap inf . Sigma NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
+  Pair NoExtField l r ->
+    Pair NoExtField <$> toCheckable l <*> toCheckable r
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toCheckable b
       <|> fmap inf . Let NoExtField v <$> toInferable e <*> toInferable b
@@ -210,6 +217,28 @@ typeCheck i ctx (XExpr (Inf e)) ty = do
       "Type mismatch: (expr, expected, actual) = "
         <> show (pprint e, pprint ty, pprint ty')
   pure e'
+typeCheck i ctx (Pair NoExtField l r) (VSigma _ ty ty') = do
+  l' <- typeCheck i ctx l ty
+  r' <-
+    unsubstBVar i
+      <$> typeCheck
+        (i + 1)
+        (addLocal i ty ctx)
+        (substBVar 0 (XName (Local i)) r)
+        (ty' $ vfree ty $ XName (EvLocal i))
+  pure $
+    Pair
+      BinderTypeSpec
+        { argType = ty
+        , bodyType = ty'
+        }
+      l'
+      r'
+typeCheck _ _ Pair {} ty =
+  Left $
+    "Expected a term of type `"
+      <> show (pprint ty)
+      <> "', but got a pair (sigma-type)."
 typeCheck i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord fldTys) = do
   -- TODO: Consider structural subtyping
   fldTyped <-
@@ -252,9 +281,9 @@ typeCheck i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
         (ty' $ vfree ty $ XName (EvLocal i))
   pure $
     Lam
-      LambdaTypeSpec
-        { lamArgType = ty
-        , lamBodyType = ty'
+      BinderTypeSpec
+        { argType = ty
+        , bodyType = ty'
         }
       v
       (quote 0 ty)
@@ -366,6 +395,7 @@ typeCheck _ _ (Ann c _ _) _ = noExtCon c
 typeCheck _ _ (Star c) _ = noExtCon c
 typeCheck _ _ (Var c _) _ = noExtCon c
 typeCheck _ _ (Pi c _ _ _) _ = noExtCon c
+typeCheck _ _ (Sigma c _ _ _) _ = noExtCon c
 typeCheck _ _ (App c _ _) _ = noExtCon c
 typeCheck _ _ (Record c _) _ = noExtCon c
 typeCheck _ _ (Variant c _) _ = noExtCon c
@@ -416,9 +446,9 @@ typeInfer i ctx (Lam NoExtField mv ty body) = do
   pure
     ( lamTy
     , Lam
-        LambdaTypeSpec
-          { lamBodyType = lamRetTy
-          , lamArgType = tyVal
+        BinderTypeSpec
+          { bodyType = lamRetTy
+          , argType = tyVal
           }
         mv
         ty'
@@ -436,6 +466,19 @@ typeInfer i ctx (Pi NoExtField mv arg ret) = do
         (substBVar 0 (XName $ Local i) ret)
         VStar
   pure (VStar, Pi NoExtField mv arg' ret')
+typeInfer i ctx (Sigma NoExtField mv arg ret) = do
+  !arg' <- typeCheck i ctx arg VStar
+  let ctx' = toEvalContext ctx
+      !t = eval ctx' arg'
+  !ret' <-
+    unsubstBVar i
+      <$> typeCheck
+        (i + 1)
+        (addLocal i t ctx)
+        (substBVar 0 (XName $ Local i) ret)
+        VStar
+  pure (VStar, Sigma NoExtField mv arg' ret')
+typeInfer _ _ (Pair c _ _) = noExtCon c
 typeInfer i ctx (Let NoExtField mv e b) = do
   (!vty, !e') <- typeInfer i ctx e
   (!ty, !b') <-
@@ -689,6 +732,24 @@ type instance PiVarName (Typing _) = AlphaName
 type instance PiVarType (Typing _) = Expr Checkable
 
 type instance PiRHS (Typing _) = Expr Checkable
+
+type instance XSigma Inferable = NoExtField
+
+type instance XSigma Checkable = NoExtCon
+
+type instance SigmaVarName (Typing _) = AlphaName
+
+type instance SigmaVarType (Typing _) = Expr Checkable
+
+type instance SigmaBody (Typing _) = Expr Checkable
+
+type instance XPair Inferable = NoExtCon
+
+type instance XPair Checkable = NoExtField
+
+type instance PairFst (Typing _) = Expr Checkable
+
+type instance PairSnd (Typing _) = Expr Checkable
 
 type instance XLet (Typing _) = NoExtField
 

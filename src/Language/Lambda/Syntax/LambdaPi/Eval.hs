@@ -29,7 +29,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   eval,
   unsubstBVar,
   unsubstBVarVal,
-  LambdaTypeSpec (..),
+  BinderTypeSpec (..),
   EvalVars (..),
   vapps,
   vfree,
@@ -69,9 +69,11 @@ import RIO (NFData (..), deepseq, tshow)
 import Text.PrettyPrint.Monadic (Pretty (..))
 
 data Value
-  = VLam LambdaTypeSpec AlphaName (Value -> Value)
+  = VLam BinderTypeSpec AlphaName (Value -> Value)
   | VStar
   | VPi AlphaName Value (Value -> Value)
+  | VSigma AlphaName Value (Value -> Value)
+  | VPair BinderTypeSpec AlphaName Value Value
   | VRecord (HashMap Text Value)
   | VMkRecord (HashMap Text Type) (HashMap Text Value)
   | VVariant (HashMap Text Value)
@@ -79,15 +81,17 @@ data Value
   | VNeutral Neutral
   deriving (Generic)
 
-instance NFData LambdaTypeSpec where
-  rnf LambdaTypeSpec {..} = rnf lamArgType `seq` rnfTyFun lamArgType lamBodyType
+instance NFData BinderTypeSpec where
+  rnf BinderTypeSpec {..} = rnf argType `seq` rnfTyFun argType bodyType
 
 rnfTyFun :: Type -> (Type -> Type) -> ()
 rnfTyFun argTy f = f `seq` f (vfree argTy (XName $ EvLocal 0)) `seq` ()
 
 instance NFData Value where
-  rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun (lamArgType lts) b
+  rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun (argType lts) b
   rnf (VPi an a b) = an `deepseq` a `deepseq` rnfTyFun a b
+  rnf (VSigma an a b) = an `deepseq` a `deepseq` rnfTyFun a b
+  rnf (VPair ts mn l r) = ts `deepseq` mn `deepseq` l `deepseq` rnf r
   rnf VStar = ()
   rnf (VRecord flds) = rnf flds
   rnf (VMkRecord fldTys flds) = fldTys `deepseq` rnf flds
@@ -96,9 +100,11 @@ instance NFData Value where
   rnf (VNeutral n) = rnf n
 
 typeOf :: Value -> Type
-typeOf (VLam LambdaTypeSpec {..} x _) = VPi x lamArgType lamBodyType
+typeOf (VLam BinderTypeSpec {..} x _) = VPi x argType bodyType
 typeOf VStar = VStar
 typeOf VPi {} = VStar
+typeOf VSigma {} = VStar
+typeOf (VPair BinderTypeSpec {..} x _ _) = VSigma x argType bodyType
 typeOf VRecord {} = VStar
 typeOf (VMkRecord fldTys _) = VRecord fldTys
 typeOf VVariant {} = VStar
@@ -176,11 +182,11 @@ instance Ord Value where
 type Type = Value
 
 quote :: Int -> Value -> Expr Eval
-quote i (VLam ls@LambdaTypeSpec {..} mv f) =
-  Lam ls mv (quote i lamArgType) $
+quote i (VLam ls@BinderTypeSpec {..} mv f) =
+  Lam ls mv (quote i argType) $
     quote (i + 1) $
       f $
-        vfree lamArgType $
+        vfree argType $
           XName $
             Quote i
 quote _ VStar = Star NoExtField
@@ -191,6 +197,15 @@ quote i (VPi mv v f) =
         vfree v $
           XName $
             Quote i
+quote i (VSigma mv v f) =
+  Sigma NoExtField mv (quote i v) $
+    quote (i + 1) $
+      f $
+        vfree v $
+          XName $
+            Quote i
+quote i (VPair ls _mv l r) =
+  Pair ls (quote i l) (quote i r)
 quote i (VNeutral n) = quoteNeutral i n
 quote i (VRecord flds) =
   Record NoExtField $
@@ -253,6 +268,10 @@ eval ctx (Lam ty mv _ e) = VLam ty mv $ \x ->
     e
 eval ctx (Pi _ mv t t') =
   VPi mv (eval ctx t) $ \x -> eval (ctx & #boundValues %~ (x <|)) t'
+eval ctx (Sigma _ mv t t') =
+  VSigma mv (eval ctx t) $ \x -> eval (ctx & #boundValues %~ (x <|)) t'
+eval ctx (Pair ty l r) =
+  VPair ty Anonymous (eval ctx l) (eval ctx r)
 eval ctx (Let _ _ e b) =
   eval
     (ctx & #boundValues %~ (eval ctx e <|))
@@ -373,10 +392,14 @@ unsubstBVar i = flip runReader 0 . go
       Pi NoExtField mn <$> go l <*> local (+ 1) (go r)
     go (Lam lamTy mn l r) =
       Lam
-        <$> unsubstLamTy i lamTy
+        <$> unsubstBinderTy i lamTy
         <*> pure mn
         <*> go l
         <*> local (+ 1) (go r)
+    go (Sigma NoExtField mn l r) =
+      Sigma NoExtField mn <$> go l <*> local (+ 1) (go r)
+    go (Pair ty l r) =
+      Pair <$> unsubstBinderTy i ty <*> go l <*> go r
     go (Ann e l r) = Ann <$> unsubstBVarValM i e <*> go l <*> go r
     go (App e l r) = App <$> unsubstBVarValM i e <*> go l <*> go r
     go (Let c mn e v) =
@@ -411,12 +434,12 @@ unsubstBVarCaseInfo i CaseTypeInfo {..} =
     <$> unsubstBVarValM i caseRetTy
     <*> mapM (unsubstBVarValM i) caseAltArgs
 
-unsubstLamTy :: Int -> LambdaTypeSpec -> Reader Int LambdaTypeSpec
-unsubstLamTy i LambdaTypeSpec {..} = do
+unsubstBinderTy :: Int -> BinderTypeSpec -> Reader Int BinderTypeSpec
+unsubstBinderTy i BinderTypeSpec {..} = do
   lvl <- ask
-  LambdaTypeSpec
-    <$> unsubstBVarValM i lamArgType
-    <*> pure (flip runReader (lvl + 1) . unsubstBVarValM i . lamBodyType)
+  BinderTypeSpec
+    <$> unsubstBVarValM i argType
+    <*> pure (flip runReader (lvl + 1) . unsubstBVarValM i . bodyType)
 
 unsubstBVarValToM :: Int -> Int -> Value -> Value
 unsubstBVarValToM lvl i v = runReader (unsubstBVarValM i v) lvl
@@ -433,9 +456,20 @@ unsubstBVarValM i = go
     go (VLam lt name f) = do
       lvl <- ask
       VLam
-        <$> unsubstLamTy i lt
+        <$> unsubstBinderTy i lt
         <*> pure name
         <*> pure (unsubstBVarValToM (lvl + 1) i . f)
+    go (VSigma mv argTy f) = do
+      lvl <- ask
+      VSigma mv
+        <$> unsubstBVarValM i argTy
+        <*> pure (unsubstBVarValToM (lvl + 1) i . f)
+    go (VPair lt name l r) = do
+      VPair
+        <$> unsubstBinderTy i lt
+        <*> pure name
+        <*> go l
+        <*> go r
     go (VRecord flds) = VRecord <$> mapM go flds
     go (VMkRecord fldTys flds) =
       VMkRecord <$> mapM go fldTys <*> mapM go flds
@@ -473,10 +507,14 @@ unsubstBoundNeutral i = go
 
 substBound :: HasCallStack => Int -> Value -> Type -> Value
 substBound i v (VLam lamTy mv f) =
-  VLam (substBoundLamSpec i v lamTy) mv $ substBound i v . f
+  VLam (substBoundBinderSpec i v lamTy) mv $ substBound i v . f
 substBound _ _ VStar = VStar
 substBound i v (VPi mv va f) =
   VPi mv (substBound i v va) $ substBound i v . f
+substBound i v (VSigma mv va f) =
+  VSigma mv (substBound i v va) $ substBound i v . f
+substBound i v (VPair ty mv l r) =
+  VPair (substBoundBinderSpec i v ty) mv (substBound i v l) (substBound i v r)
 substBound i v (VNeutral neu) =
   either VNeutral (substBound i v) $ substBoundNeutral i v neu
 substBound i v (VRecord flds) = VRecord $ fmap (substBound i v) flds
@@ -484,11 +522,11 @@ substBound i v (VMkRecord fldTy flds) = VMkRecord (substBound i v <$> fldTy) $ s
 substBound i v (VVariant flds) = VVariant $ fmap (substBound i v) flds
 substBound i v (VInj alts l e) = VInj (substBound i v <$> alts) l $ substBound i v e
 
-substBoundLamSpec :: Int -> Value -> LambdaTypeSpec -> LambdaTypeSpec
-substBoundLamSpec i v l =
-  LambdaTypeSpec
-    { lamArgType = substBound i v $ lamArgType l
-    , lamBodyType = substBound i v . lamBodyType l
+substBoundBinderSpec :: Int -> Value -> BinderTypeSpec -> BinderTypeSpec
+substBoundBinderSpec i v l =
+  BinderTypeSpec
+    { argType = substBound i v $ argType l
+    , bodyType = substBound i v . bodyType l
     }
 
 substBoundNeutral :: HasCallStack => Int -> Value -> Neutral -> Either Neutral Value
@@ -557,34 +595,34 @@ type instance AppLHS Eval = Expr Eval
 
 type instance AppRHS Eval = Expr Eval
 
-type instance XLam Eval = LambdaTypeSpec
+type instance XLam Eval = BinderTypeSpec
 
-data LambdaTypeSpec = LambdaTypeSpec
-  { lamArgType :: !Type
-  , lamBodyType :: !(Type -> Type)
+data BinderTypeSpec = BinderTypeSpec
+  { argType :: !Type
+  , bodyType :: !(Type -> Type)
   }
   deriving (Generic)
 
-instance Show LambdaTypeSpec where
+instance Show BinderTypeSpec where
   showsPrec _ spc =
     let (arg, bdy) = lamTypeSpecRank spc
-     in showString "LambdaTypeSpec { "
-          . showString "lamArgType = "
+     in showString "BinderTypeSpec { "
+          . showString "argType = "
           . shows arg
           . showString ", "
-          . showString "lamBodyType = "
+          . showString "bodyType = "
           . shows bdy
           . showString " }"
 
-instance Eq LambdaTypeSpec where
+instance Eq BinderTypeSpec where
   (==) = (==) `on` lamTypeSpecRank
 
-instance Ord LambdaTypeSpec where
+instance Ord BinderTypeSpec where
   compare = comparing lamTypeSpecRank
 
-lamTypeSpecRank :: LambdaTypeSpec -> (Type, Type)
+lamTypeSpecRank :: BinderTypeSpec -> (Type, Type)
 lamTypeSpecRank l =
-  (lamArgType l, VPi Anonymous (lamArgType l) $ lamBodyType l)
+  (argType l, VPi Anonymous (argType l) $ bodyType l)
 
 type instance LamBindName Eval = AlphaName
 
@@ -599,6 +637,22 @@ type instance PiVarName Eval = AlphaName
 type instance PiVarType Eval = Expr Eval
 
 type instance PiRHS Eval = Expr Eval
+
+type instance XSigma Eval = NoExtField
+
+type instance SigmaVarName Eval = AlphaName
+
+type instance SigmaVarType Eval = Expr Eval
+
+type instance SigmaBody Eval = Expr Eval
+
+type instance XLam Eval = BinderTypeSpec
+
+type instance XPair Eval = BinderTypeSpec
+
+type instance PairFst Eval = Expr Eval
+
+type instance PairSnd Eval = Expr Eval
 
 type instance XLet Eval = Type
 

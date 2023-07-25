@@ -76,6 +76,16 @@ renameExprM = \case
             %~ maybe id (`HM.insert` 0) (maybeName mv) . fmap succ
         )
         (renameExprM body)
+  Sigma NoExtField mv typ body ->
+    Sigma NoExtField (maybe Anonymous AlphaName $ maybeName mv)
+      <$> renameExprM typ
+      <*> local
+        ( #boundVars
+            %~ maybe id (`HM.insert` 0) (maybeName mv) . fmap succ
+        )
+        (renameExprM body)
+  Pair NoExtField l r ->
+    Pair NoExtField <$> renameExprM l <*> renameExprM r
   Let NoExtField v e body ->
     Let NoExtField (AlphaName v)
       <$> renameExprM e
@@ -151,6 +161,20 @@ type instance PiVarName Rename = AlphaName
 type instance PiVarType Rename = Expr Rename
 
 type instance PiRHS Rename = Expr Rename
+
+type instance XSigma Rename = NoExtField
+
+type instance SigmaVarName Rename = AlphaName
+
+type instance SigmaVarType Rename = Expr Rename
+
+type instance SigmaBody Rename = Expr Rename
+
+type instance XPair Rename = NoExtField
+
+type instance PairFst Rename = Expr Rename
+
+type instance PairSnd Rename = Expr Rename
 
 type instance XLet Rename = NoExtField
 
