@@ -613,6 +613,10 @@ substBVar !i r (Lam x mv ann body) =
     SInfer -> Lam x mv (substBVar i r ann) $ substBVar (i + 1) r body
 substBVar !i r (Pi c mv ann body) =
   Pi c mv (substBVar i r ann) (substBVar (i + 1) r body)
+substBVar !i r (Sigma c mv ann body) =
+  Sigma c mv (substBVar i r ann) (substBVar (i + 1) r body)
+substBVar !i r (Pair c f s) =
+  Pair c (substBVar i r f) (substBVar i r s)
 substBVar !i r (Let NoExtField mv e b) =
   Let NoExtField mv (substBVar i r e) $ substBVar (i + 1) r b
 substBVar i r (Record c (RecordFieldTypes flds)) =
