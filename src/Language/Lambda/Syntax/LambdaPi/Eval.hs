@@ -431,6 +431,8 @@ pattern P p <- NFree _ (PrimName _ p)
 
 (@@) :: HasCallStack => Value -> Value -> Value
 VLam _ _ f @@ r = f r
+VNeutral nlhs@(P NatElim :@ _ :@ _ :@ _) @@ VNeutral n =
+  VNeutral $ NApp (typeOfNeutral nlhs @@ VNeutral n) nlhs (VNeutral n)
 VNeutral (P NatElim :@ t :@ base :@ ind) @@ n = evalNatElim t base ind n
 VNeutral neu @@ r
   | VPi _ _ f <- typeOfNeutral neu =

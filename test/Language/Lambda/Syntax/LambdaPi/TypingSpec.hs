@@ -71,6 +71,19 @@ infCases =
               VPi (AlphaName "m") VNat $ \n ->
                 f @@ n
     )
+  ,
+    ( inf "λ (a : Type) (n : Nat) (f : a -> a). natElim (λ _. a -> a) (λ x. x) (λ _ fn x. f (fn x)) n"
+    , VPi (AlphaName "a") VStar $ \a ->
+        VPi (AlphaName "n") VNat $ \_n ->
+          VPi (AlphaName "f") (a ~> a) $ \_f ->
+            a ~> a
+    )
+  ,
+    ( inf "(λ (a : Type) (n : Nat) (f : a -> a). natElim (λ _. a -> a) (λ x. x) (λ _ fn x. f (fn x)) n) Nat"
+    , VPi (AlphaName "n") VNat $ \_n ->
+        VPi (AlphaName "f") (VNat ~> VNat) $ \_f ->
+          VNat ~> VNat
+    )
   ]
 
 pattern VNat :: Value
