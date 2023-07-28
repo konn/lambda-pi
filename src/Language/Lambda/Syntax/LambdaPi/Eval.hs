@@ -382,13 +382,39 @@ evalNatElim t t0 tStep = fix $ \recur kVal ->
     VNeutral (NFree _ (PrimName _ Zero)) -> t0
     VNeutral (NApp _ (NFree _ (PrimName _ Succ)) l) -> tStep @@ l @@ recur l
     VNeutral nk ->
-      ( vfree natElimType (PrimName NoExtField NatElim)
-          @@ t
-          @@ t0
-          @@ tStep
-      )
-        @@ VNeutral nk
+      VNeutral $
+        NApp
+          (t @@ VNeutral nk)
+          ( NApp
+              (VPi Anonymous VNat (t @@))
+              ( NApp
+                  ( VPi Anonymous VNat (\l -> (t @@ l) ~> (t @@ (vSucc @@ l)))
+                      ~> VPi Anonymous VNat (t @@)
+                  )
+                  ( NApp
+                      ( (t @@ vZero)
+                          ~> VPi
+                            Anonymous
+                            VNat
+                            ( \l ->
+                                (t @@ l) ~> (t @@ (vSucc @@ l))
+                            )
+                          ~> VPi Anonymous VNat (t @@)
+                      )
+                      (NFree natElimType (PrimName NoExtField NatElim))
+                      t
+                  )
+                  t0
+              )
+              tStep
+          )
+          (VNeutral nk)
     _ -> error "internal: eval natElim failed!"
+
+infixr 0 ~>
+
+(~>) :: Type -> Type -> Type
+(~>) l = VPi Anonymous l . const
 
 natElimType :: HasCallStack => Type
 natElimType =
