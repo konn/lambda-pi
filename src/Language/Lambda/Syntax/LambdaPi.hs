@@ -700,7 +700,7 @@ instance
       2
       $ instantiate rawName (pretty body)
   pretty (Pair _ l r) = do
-    "⟨" <+> pretty l <+> pretty r <+> "⟩"
+    "⟨" <+> pretty l <+> "," <+> pretty r <+> "⟩"
   pretty (Split _ s l r b) = do
     PrettyName {rawName = var1, unambName = varN1} <- toPrettyName "fst" l
     PrettyName {rawName = var2, unambName = varN2} <- toPrettyName "snd" r
