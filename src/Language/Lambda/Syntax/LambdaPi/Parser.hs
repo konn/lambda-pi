@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -92,7 +93,7 @@ appSpaceP =
       )
 
 termP :: Parser ParsedExpr
-termP = piP <|> sigmaP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> caseP <|> lamP <|> varP <|> parens exprP
+termP = piP <|> sigmaP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> splitP <|> caseP <|> lamP <|> varP <|> parens exprP
 
 openP :: Parser ParsedExpr
 openP =
@@ -135,6 +136,14 @@ pairP =
         <$> exprP
         <* symbol ","
         <*> exprP
+
+splitP :: Parser ParsedExpr
+splitP = label "split-expression" $ do
+  lName <- reserved "split" *> symbol "⟨" *> identifier <* symbol ","
+  rName <- identifier <* symbol "⟩" <* reservedOp "="
+  s <- exprP <* reserved "in"
+  b <- exprP
+  pure $ Split NoExtField s lName rName b
 
 caseAltP :: Parser (Text, CaseAlt Parse)
 caseAltP =
@@ -296,7 +305,7 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "Σ", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let", "case", "of"]
+keywords = HS.fromList ["λ", "Π", "Σ", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let", "case", "of", "split"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'
@@ -427,6 +436,16 @@ type instance XPair Parse = NoExtField
 type instance PairFst Parse = Expr Parse
 
 type instance PairSnd Parse = Expr Parse
+
+type instance XSplit Parse = NoExtField
+
+type instance SplitScrutinee Parse = Expr Parse
+
+type instance SplitFstName Parse = Text
+
+type instance SplitSndName Parse = Text
+
+type instance SplitBody Parse = Expr Parse
 
 type instance XLet Parse = NoExtField
 

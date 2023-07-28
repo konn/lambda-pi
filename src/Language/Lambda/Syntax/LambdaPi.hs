@@ -14,6 +14,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -87,6 +88,13 @@ module Language.Lambda.Syntax.LambdaPi (
   XPair,
   PairFst,
   PairSnd,
+
+  -- **** Destruction
+  XSplit,
+  SplitScrutinee,
+  SplitFstName,
+  SplitSndName,
+  SplitBody,
 
   -- *** Let-expressions
   XLet,
@@ -203,6 +211,7 @@ data Expr phase
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
   | Sigma (XSigma phase) (SigmaVarName phase) (SigmaVarType phase) (SigmaBody phase)
   | Pair (XPair phase) (PairFst phase) (PairSnd phase)
+  | Split (XSplit phase) (SplitScrutinee phase) (SplitFstName phase) (SplitSndName phase) (SplitBody phase)
   | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
@@ -370,13 +379,23 @@ type family SigmaVarName p
 
 type family SigmaVarType p
 
+type family SigmaBody p
+
 type family XPair p
 
 type family PairFst p
 
 type family PairSnd p
 
-type family SigmaBody p
+type family XSplit p
+
+type family SplitScrutinee p
+
+type family SplitFstName p
+
+type family SplitSndName p
+
+type family SplitBody p
 
 type family XLet p
 
@@ -569,6 +588,18 @@ l <@> r =
   withPrecParens 12 $
     l <+> withPrecedence 13 r
 
+data PrettyName = PrettyName {rawName :: !Text, unambName :: !Text}
+  deriving (Show, Eq, Ord, Generic)
+
+toPrettyName :: VarLike v => Text -> v -> DocM PrettyEnv PrettyName
+toPrettyName defName v = do
+  var <- fromMaybe defName <$> varName v
+  lvl <- views (#levels . at var) (fromMaybe 0)
+  let name
+        | lvl > 0 = var <> "_" <> tshow lvl
+        | otherwise = var
+  pure PrettyName {rawName = var, unambName = name}
+
 instance
   ( Pretty PrettyEnv (AnnLHS phase)
   , Pretty PrettyEnv (AnnRHS phase)
@@ -589,6 +620,10 @@ instance
   , Pretty PrettyEnv (SigmaBody phase)
   , Pretty PrettyEnv (PairFst phase)
   , Pretty PrettyEnv (PairSnd phase)
+  , VarLike (SplitFstName phase)
+  , VarLike (SplitSndName phase)
+  , Pretty PrettyEnv (SplitScrutinee phase)
+  , Pretty PrettyEnv (SplitBody phase)
   , VarLike (LetName phase)
   , Pretty PrettyEnv (LetRHS phase)
   , Pretty PrettyEnv (LetBody phase)
@@ -614,79 +649,71 @@ instance
   pretty (App _ l r) = pretty l <@> pretty r
   pretty (Lam _ mv mp body) = withPrecParens 4 $ do
     let mArgTy = bindeeType mp
-    var <- fromMaybe "x" <$> varName mv
-    lvl <- views (#levels . at var) (fromMaybe 0)
-    let varN
-          | lvl > 0 = var <> "_" <> tshow lvl
-          | otherwise = var
+    PrettyName {..} <- toPrettyName "x" mv
     hang
       ( ( char 'λ'
             <+> appWhen
               (isJust mArgTy)
               parens
-              ( text varN <+> forM_ mArgTy \ty ->
+              ( text unambName <+> forM_ mArgTy \ty ->
                   colon <+> pretty ty
               )
         )
           <> char '.'
       )
       2
-      $ instantiate var (pretty body)
+      $ instantiate rawName (pretty body)
   pretty (Pi _ mv mp body) = withPrecParens 4 $ do
     -- TODO: check occurrence of mv in body and
     -- use arrows if absent!
     let mArgTy = bindeeType mp
-    var <- fromMaybe "x" <$> varName mv
-    lvl <- views (#levels . at var) (fromMaybe 0)
-    let varN
-          | lvl > 0 = var <> "_" <> T.pack (show lvl)
-          | otherwise = var
+    PrettyName {..} <- toPrettyName "x" mv
     hang
       ( ( char 'Π'
             <+> appWhen
               (isJust mArgTy)
               parens
-              ( text varN <+> forM_ mArgTy \ty ->
+              ( text unambName <+> forM_ mArgTy \ty ->
                   colon <+> pretty ty
               )
         )
           <> char '.'
       )
       2
-      $ instantiate var (pretty body)
+      $ instantiate rawName (pretty body)
   pretty (Sigma _ mv mp body) = withPrecParens 4 $ do
     -- TODO: check occurrence of mv in body and
     -- use arrows if absent!
     let mArgTy = bindeeType mp
-    var <- fromMaybe "x" <$> varName mv
-    lvl <- views (#levels . at var) (fromMaybe 0)
-    let varN
-          | lvl > 0 = var <> "_" <> T.pack (show lvl)
-          | otherwise = var
+    PrettyName {..} <- toPrettyName "x" mv
     hang
       ( ( char 'Σ'
             <+> appWhen
               (isJust mArgTy)
               parens
-              ( text varN <+> forM_ mArgTy \ty ->
+              ( text unambName <+> forM_ mArgTy \ty ->
                   colon <+> pretty ty
               )
         )
           <> char '.'
       )
       2
-      $ instantiate var (pretty body)
+      $ instantiate rawName (pretty body)
   pretty (Pair _ l r) = do
     "⟨" <+> pretty l <+> pretty r <+> "⟩"
+  pretty (Split _ s l r b) = do
+    PrettyName {rawName = var1, unambName = varN1} <- toPrettyName "fst" l
+    PrettyName {rawName = var2, unambName = varN2} <- toPrettyName "snd" r
+    ("split" <+> "⟨" <+> text varN1 <+> comma <+> text varN2 <+> "⟩")
+      <+> "="
+      <+> pretty s
+      <+> "in"
+      <+> instantiate var1 (instantiate var2 $ pretty b)
   pretty (Let _ n b e) = do
-    var <- fromMaybe "x" <$> varName n
-    lvl <- views (#levels . at var) (fromMaybe 0)
-    let varN
-          | lvl > 0 = var <> "_" <> tshow lvl
-          | otherwise = var
+    PrettyName {..} <- toPrettyName "x" n
     sep
-      [ "let" <+> text varN <+> "=" <+> pretty b
-      , "in" <+> instantiate var (pretty e)
+      [ "let" <+> text unambName <+> "=" <+> pretty b
+      , "in" <+> instantiate rawName (pretty e)
       ]
   -- FIXME: compress numerals
   pretty (Record _ (RecordFieldTypes flds)) =

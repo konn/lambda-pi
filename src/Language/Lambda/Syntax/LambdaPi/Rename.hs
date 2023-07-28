@@ -86,6 +86,12 @@ renameExprM = \case
         (renameExprM body)
   Pair NoExtField l r ->
     Pair NoExtField <$> renameExprM l <*> renameExprM r
+  Split NoExtField s l r b ->
+    Split NoExtField
+      <$> renameExprM s
+      <*> pure (AlphaName l)
+      <*> pure (AlphaName r)
+      <*> abstract l (abstract r $ renameExprM b)
   Let NoExtField v e body ->
     Let NoExtField (AlphaName v)
       <$> renameExprM e
@@ -175,6 +181,16 @@ type instance XPair Rename = NoExtField
 type instance PairFst Rename = Expr Rename
 
 type instance PairSnd Rename = Expr Rename
+
+type instance XSplit Rename = NoExtField
+
+type instance SplitScrutinee Rename = Expr Rename
+
+type instance SplitFstName Rename = AlphaName
+
+type instance SplitSndName Rename = AlphaName
+
+type instance SplitBody Rename = Expr Rename
 
 type instance XLet Rename = NoExtField
 

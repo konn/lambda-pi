@@ -13,6 +13,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -89,6 +90,7 @@ toInferable = \case
   Sigma NoExtField mv srcTy dstTy ->
     Pi NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
   Pair {} -> Nothing
+  Split {} -> Nothing
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toInferable b
   Record NoExtField (RecordFieldTypes flds) ->
@@ -137,6 +139,8 @@ toCheckable = \case
     fmap inf . Sigma NoExtField mv <$> toCheckable srcTy <*> toCheckable dstTy
   Pair NoExtField l r ->
     Pair NoExtField <$> toCheckable l <*> toCheckable r
+  Split NoExtField scrut2 l r b ->
+    Split NoExtField <$> toInferable scrut2 <*> pure l <*> pure r <*> toCheckable b
   Let NoExtField v e b ->
     Let NoExtField v <$> toInferable e <*> toCheckable b
       <|> fmap inf . Let NoExtField v <$> toInferable e <*> toInferable b
@@ -239,6 +243,27 @@ typeCheck _ _ Pair {} ty =
     "Expected a term of type `"
       <> show (pprint ty)
       <> "', but got a pair (sigma-type)."
+typeCheck i ctx (Split _ scrut2 lName rName body) splitRetType = do
+  (scrut2Ty, scrut2') <- typeInfer i ctx scrut2
+  case scrut2Ty of
+    VSigma _ splitFstType splitSndType -> do
+      body' <-
+        unsubstBVarTo 1 i . unsubstBVarTo 0 (i + 1)
+          <$> typeCheck
+            (i + 2)
+            ( addLocal
+                (i + 1)
+                ( splitSndType $
+                    vfree splitFstType $
+                      XName $
+                        EvLocal i
+                )
+                $ addLocal i splitFstType ctx
+            )
+            (substBVar 1 (XName $ Local i) $ substBVar 0 (XName (Local (i + 1))) body)
+            splitRetType
+      pure $ Split SplitTypeInfo {..} scrut2' lName rName body'
+    _ -> Left $ "A scrutinee of split-expression must be of Sigma-type, but has type : " <> show (pprint scrut2Ty)
 typeCheck i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord fldTys) = do
   -- TODO: Consider structural subtyping
   fldTyped <-
@@ -479,6 +504,7 @@ typeInfer i ctx (Sigma NoExtField mv arg ret) = do
         VStar
   pure (VStar, Sigma NoExtField mv arg' ret')
 typeInfer _ _ (Pair c _ _) = noExtCon c
+typeInfer _ _ (Split c _ _ _ _) = noExtCon c
 typeInfer i ctx (Let NoExtField mv e b) = do
   (!vty, !e') <- typeInfer i ctx e
   (!ty, !b') <-
@@ -617,6 +643,9 @@ substBVar !i r (Sigma c mv ann body) =
   Sigma c mv (substBVar i r ann) (substBVar (i + 1) r body)
 substBVar !i r (Pair c f s) =
   Pair c (substBVar i r f) (substBVar i r s)
+substBVar !i r (Split cty scrut2 lN rN b) =
+  Split cty (substBVar i r scrut2) lN rN $
+    substBVar (i + 2) r b
 substBVar !i r (Let NoExtField mv e b) =
   Let NoExtField mv (substBVar i r e) $ substBVar (i + 1) r b
 substBVar i r (Record c (RecordFieldTypes flds)) =
@@ -754,6 +783,18 @@ type instance XPair Checkable = NoExtField
 type instance PairFst (Typing _) = Expr Checkable
 
 type instance PairSnd (Typing _) = Expr Checkable
+
+type instance XSplit Inferable = NoExtCon
+
+type instance XSplit Checkable = NoExtField
+
+type instance SplitScrutinee (Typing _) = Expr Inferable
+
+type instance SplitFstName (Typing _) = AlphaName
+
+type instance SplitSndName (Typing _) = AlphaName
+
+type instance SplitBody (Typing _) = Expr Checkable
 
 type instance XLet (Typing _) = NoExtField
 

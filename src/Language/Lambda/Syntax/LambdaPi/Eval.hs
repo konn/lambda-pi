@@ -28,6 +28,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   Neutral (..),
   eval,
   unsubstBVar,
+  unsubstBVarTo,
   unsubstBVarVal,
   BinderTypeSpec (..),
   EvalVars (..),
@@ -42,6 +43,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   quote,
   Eval,
   CaseTypeInfo (..),
+  SplitTypeInfo (..),
   substBound,
   inferPrim,
   evalNatElim,
@@ -85,7 +87,10 @@ instance NFData BinderTypeSpec where
   rnf BinderTypeSpec {..} = rnf argType `seq` rnfTyFun argType bodyType
 
 rnfTyFun :: Type -> (Type -> Type) -> ()
-rnfTyFun argTy f = f `seq` f (vfree argTy (XName $ EvLocal 0)) `seq` ()
+rnfTyFun argTy f = f `deepseq` f (vfree argTy (XName $ EvLocal 0)) `deepseq` ()
+
+rnfTyFun2 :: Type -> Type -> (Type -> Type -> Type) -> ()
+rnfTyFun2 fstTy sndTy f = f `deepseq` f (vfree fstTy (XName $ EvLocal 0)) (vfree sndTy (XName $ EvLocal 1)) `deepseq` ()
 
 instance NFData Value where
   rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun (argType lts) b
@@ -132,10 +137,40 @@ instance Show Value where
 instance Pretty e (Expr Eval) => Pretty e Value where
   pretty = pretty . quote 0
 
+data SplitTypeInfo = SplitTypeInfo
+  { splitFstType :: Type
+  , splitSndType :: Type -> Type
+  , splitRetType :: Type
+  }
+  deriving (Generic)
+  deriving anyclass (NFData)
+
+instance Show SplitTypeInfo where
+  showsPrec _ spc =
+    let (arg, bdy) = splitTypeRank spc
+     in showString "BinderTypeSpec { "
+          . showString "scrutinee = "
+          . shows arg
+          . showString ", "
+          . showString "bodyType = "
+          . shows bdy
+          . showString " }"
+
+instance Eq SplitTypeInfo where
+  (==) = (==) `on` splitTypeRank
+
+instance Ord SplitTypeInfo where
+  compare = comparing splitTypeRank
+
+splitTypeRank :: SplitTypeInfo -> (Type, Type)
+splitTypeRank SplitTypeInfo {..} =
+  (VSigma Anonymous splitFstType splitSndType, splitRetType)
+
 data Neutral
   = NFree Type (Name Eval)
   | NApp Type Neutral Value
   | NProjField Type Neutral Text
+  | NSplit SplitTypeInfo Neutral AlphaName AlphaName (Value -> Value -> Value)
   | NCase CaseTypeInfo Neutral (HM.HashMap Text (Value -> Value))
   -- FIXME: Work out what NOpen should be
   deriving (Generic)
@@ -145,6 +180,15 @@ instance NFData Neutral where
   rnf (NApp ty l r) = ty `deepseq` l `deepseq` rnf r
   rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
   rnf (NCase ty e xs) = ty `deepseq` e `deepseq` rnf (fmap (rnfTyFun VStar) xs)
+  rnf (NSplit cty s l r b) =
+    cty `deepseq`
+      s `deepseq`
+        l `deepseq`
+          r `deepseq`
+            rnfTyFun2
+              (splitFstType cty)
+              (splitSndType cty (vfree (splitFstType cty) $ XName $ Quote 0))
+              b
 
 nPrim :: Type -> Prim -> Neutral
 nPrim ty p = NFree ty $ PrimName NoExtField p
@@ -162,6 +206,7 @@ typeOfNeutral (NFree retTy _) = retTy
 typeOfNeutral (NApp retTy _ _) = retTy
 typeOfNeutral (NProjField retTy _ _) = retTy
 typeOfNeutral (NCase CaseTypeInfo {..} _ _) = caseRetTy
+typeOfNeutral (NSplit ty _ _ _ _) = splitRetType ty
 
 vfree :: Type -> Name Eval -> Value
 vfree = fmap VNeutral . NFree
@@ -230,6 +275,15 @@ quoteNeutral i (NFree ty x) = boundFree ty i x
 quoteNeutral i (NApp ty n v) = App ty (quoteNeutral i n) (quote i v)
 quoteNeutral i (NProjField ty r f) =
   ProjField ty (quoteNeutral i r) f
+quoteNeutral i (NSplit ty@SplitTypeInfo {..} s l r f) =
+  Split ty (quoteNeutral i s) l r $
+    quote (i + 2) $
+      f
+        (vfree splitFstType (XName $ Quote i))
+        ( vfree
+            (splitSndType $ vfree splitFstType $ XName $ Quote i)
+            (XName $ Quote (i + 1))
+        )
 quoteNeutral i (NCase ty@CaseTypeInfo {..} v alts) =
   Case ty (quoteNeutral i v) $
     CaseAlts $
@@ -292,11 +346,21 @@ eval ctx (Open _ rcd bdy) =
           <> show (pprint $ quote 0 otr)
 eval ctx (Variant _ flds) = VVariant $ HM.fromList $ map (Bi.second $ eval ctx) $ variantTags flds
 eval ctx (Inj alts t e) = VInj alts t $ eval ctx e
+eval ctx (Split cinfo scrtn lName rName body) =
+  evalSplit cinfo (eval ctx scrtn) lName rName $ \_fst _snd ->
+    eval (ctx & #boundValues %~ ((_snd <|) . (_fst <|))) body
 eval ctx (Case cinfo e (CaseAlts alts)) =
   evalCase cinfo (eval ctx e) $
     HM.fromList alts <&> \(CaseAlt _ _ b) v ->
       eval (ctx & #boundValues %~ (v <|)) b
 eval _ (XExpr c) = noExtCon c
+
+evalSplit :: SplitTypeInfo -> Value -> AlphaName -> AlphaName -> (Value -> Value -> Value) -> Value
+evalSplit sinfo v0 lName rName body =
+  case v0 of
+    VNeutral n -> VNeutral $ NSplit sinfo n lName rName body
+    VPair _ _ l r -> body l r
+    v -> error $ "Impossible: split-expression expects dependent-pair (sigma-type) as a scrutinee, but got: " <> show (pprint v)
 
 evalCase :: CaseTypeInfo -> Value -> HashMap Text (Value -> Value) -> Value
 evalCase cinfo v0 alts = case v0 of
@@ -380,7 +444,10 @@ unsubstBVarVal :: Int -> Value -> Value
 unsubstBVarVal = fmap (`runReader` 0) . unsubstBVarValM
 
 unsubstBVar :: Int -> Expr Eval -> Expr Eval
-unsubstBVar i = flip runReader 0 . go
+unsubstBVar = unsubstBVarTo 0
+
+unsubstBVarTo :: Int -> Int -> Expr Eval -> Expr Eval
+unsubstBVarTo j0 i = flip runReader j0 . go
   where
     go (Var ty name) = do
       -- NOTE: This isn't needed if occurs check passed
@@ -400,6 +467,13 @@ unsubstBVar i = flip runReader 0 . go
       Sigma NoExtField mn <$> go l <*> local (+ 1) (go r)
     go (Pair ty l r) =
       Pair <$> unsubstBinderTy i ty <*> go l <*> go r
+    go (Split ty scrut2 lName rName b) =
+      Split
+        <$> unsubstBVarSplitInfo i ty
+        <*> go scrut2
+        <*> pure lName
+        <*> pure rName
+        <*> local (+ 2) (go b)
     go (Ann e l r) = Ann <$> unsubstBVarValM i e <*> go l <*> go r
     go (App e l r) = App <$> unsubstBVarValM i e <*> go l <*> go r
     go (Let c mn e v) =
@@ -427,6 +501,14 @@ unsubstBVar i = flip runReader 0 . go
     go (XExpr c) = noExtCon c
     goAlt (CaseAlt NoExtField name a) =
       CaseAlt NoExtField name <$> go a
+
+unsubstBVarSplitInfo :: Int -> SplitTypeInfo -> Reader Int SplitTypeInfo
+unsubstBVarSplitInfo i si = do
+  lvl <- ask
+  _fst <- unsubstBVarValM i $ splitFstType si
+  let _snd = flip runReader (lvl + 1) . unsubstBVarValM i . splitSndType si
+  _ret <- unsubstBVarValM i $ splitRetType si
+  pure SplitTypeInfo {splitFstType = _fst, splitSndType = _snd, splitRetType = _ret}
 
 unsubstBVarCaseInfo :: Int -> CaseTypeInfo -> Reader Int CaseTypeInfo
 unsubstBVarCaseInfo i CaseTypeInfo {..} =
@@ -494,6 +576,14 @@ unsubstBoundNeutral i = go
         <*> unsubstBVarValM i v
     go (NProjField ty p l) =
       NProjField <$> unsubstBVarValM i ty <*> go p <*> pure l
+    go (NSplit ty scrut2 ln rn b) = do
+      lvl <- ask
+      NSplit
+        <$> unsubstBVarSplitInfo i ty
+        <*> go scrut2
+        <*> pure ln
+        <*> pure rn
+        <*> pure \l r -> runReader (unsubstBVarValM i $ b l r) lvl
     go (NCase ty scr alts) = do
       lvl <- ask
       NCase
@@ -543,11 +633,25 @@ substBoundNeutral i v (NProjField retTy0 r f) =
    in case substBoundNeutral i v r of
         Right rec -> Right $ evalProjField retTy f rec
         Left n -> Left $ NProjField retTy n f
+substBoundNeutral i v (NSplit sty0 scrut2 l r e) =
+  let sty = substBoundSplitTy i v sty0
+   in case substBoundNeutral i v scrut2 of
+        Left scrut2' -> Left $ NSplit sty scrut2' l r $ \x y ->
+          substBound i v $ e x y
+        Right scrut2' -> Right $ evalSplit sty scrut2' l r e
 substBoundNeutral i v (NCase caseTy0 e valts) =
   let caseTy = substBoundCaseTy i v caseTy0
    in case substBoundNeutral i v e of
         Left e' -> Left $ NCase caseTy e' $ fmap (substBound i v .) valts
         Right e' -> Right $ evalCase caseTy e' valts
+
+substBoundSplitTy :: Int -> Value -> SplitTypeInfo -> SplitTypeInfo
+substBoundSplitTy i v sinfo =
+  SplitTypeInfo
+    { splitFstType = substBound i v $ splitFstType sinfo
+    , splitSndType = substBound (i + 1) v . splitSndType sinfo . substBound i v
+    , splitRetType = substBound i v $ splitRetType sinfo
+    }
 
 substBoundCaseTy :: Int -> Value -> CaseTypeInfo -> CaseTypeInfo
 substBoundCaseTy i v cinfo =
@@ -653,6 +757,16 @@ type instance XPair Eval = BinderTypeSpec
 type instance PairFst Eval = Expr Eval
 
 type instance PairSnd Eval = Expr Eval
+
+type instance XSplit Eval = SplitTypeInfo
+
+type instance SplitScrutinee Eval = Expr Eval
+
+type instance SplitFstName Eval = AlphaName
+
+type instance SplitSndName Eval = AlphaName
+
+type instance SplitBody Eval = Expr Eval
 
 type instance XLet Eval = Type
 
