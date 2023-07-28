@@ -223,13 +223,14 @@ typeCheck i ctx (XExpr (Inf e)) ty = do
   pure e'
 typeCheck i ctx (Pair NoExtField l r) (VSigma _ ty ty') = do
   l' <- typeCheck i ctx l ty
+  let lVal = eval (toEvalContext ctx) l'
   r' <-
     unsubstBVar i
       <$> typeCheck
         (i + 1)
         (addLocal i ty ctx)
         (substBVar 0 (XName (Local i)) r)
-        (ty' $ vfree ty $ XName (EvLocal i))
+        (ty' lVal)
   pure $
     Pair
       BinderTypeSpec
