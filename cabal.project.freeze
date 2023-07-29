@@ -6,6 +6,7 @@
 -- To only use tested packages, uncomment the following line:
 -- remote-repo: stackage-lts-21.4:http://www.stackage.org/lts-21.4
 with-compiler: ghc-9.4.5
+index-state: hackage.haskell.org 2023-07-29T02:33:35Z
 constraints: abstract-deque ==0.3,
              abstract-deque-tests ==0.3,
              abstract-par ==0.3.3,
