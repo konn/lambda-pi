@@ -493,12 +493,12 @@ newtype ThawEnv n = ThawEnv {curLvl :: Int}
 
 type Thawer n = Reader (ThawEnv n)
 
-thawLocalVal :: (KnownLevel n) => Value' (S n) -> Value' n
+thawLocalVal :: Value' (S n) -> Value' n
 thawLocalVal =
-  flip runReader ThawEnv {curLvl = 0, ..} . thawLocalValM
+  flip runReader ThawEnv {curLvl = 0} . thawLocalValM
 
-thawLocal :: forall n. (KnownLevel n) => Expr (Eval' (S n)) -> Expr (Eval' n)
-thawLocal = flip runReader ThawEnv {curLvl = 0, ..} . go
+thawLocal :: forall n. Expr (Eval' (S n)) -> Expr (Eval' n)
+thawLocal = flip runReader ThawEnv {curLvl = 0} . go
   where
     go :: Expr (Eval' (S n)) -> Thawer n (Expr (Eval' n))
     go (Var ty name) = do

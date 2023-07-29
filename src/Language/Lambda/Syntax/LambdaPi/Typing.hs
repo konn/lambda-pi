@@ -212,7 +212,7 @@ toEvalContext ctx =
   mempty @(Env' n)
     & #namedBinds .~ HM.mapMaybe varValue ctx.globals
 
-addLocal :: (KnownLevel n) => Type' n -> Context' n -> Context' ('S n)
+addLocal :: Type' n -> Context' n -> Context' ('S n)
 addLocal ty ctx =
   let te = ThawEnv {curLvl = 0}
    in ctx
@@ -251,7 +251,7 @@ typeCheck' i ctx (XExpr (Inf e)) ty = do
       "Type mismatch: (expr, expected, actual) = "
         <> show (pprint e, pprint ty, pprint ty')
   pure e'
-typeCheck' i ctx (Pair NoExtField l r) (VSigma _ ty ty') = withKnownLevel i $ do
+typeCheck' i ctx (Pair NoExtField l r) (VSigma _ ty ty') = do
   l' <- typeCheck' i ctx l ty
   let lVal = eval (toEvalContext ctx) l'
   r' <-
@@ -274,7 +274,7 @@ typeCheck' _ _ Pair {} ty =
     "Expected a term of type `"
       <> show (pprint ty)
       <> "', but got a pair (sigma-type)."
-typeCheck' i ctx (Split _ scrut2 lName rName body) splitRetType = withKnownLevel i $ do
+typeCheck' i ctx (Split _ scrut2 lName rName body) splitRetType = do
   (scrut2Ty, scrut2') <- typeInfer' i ctx scrut2
   case scrut2Ty of
     VSigma _ splitFstType splitSndType -> do
@@ -327,7 +327,7 @@ typeCheck' _ _ mkRec@MkRecord {} ty =
       <> "', but got a record: "
       <> show (pprint mkRec)
 typeCheck' _ _ (ProjField c _ _) _ = noExtCon c
-typeCheck' i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = withKnownLevel i $ do
+typeCheck' i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
   e' <-
     thawLocal
       <$> typeCheck'
@@ -350,7 +350,7 @@ typeCheck' _ _ lam@(Lam NoExtField _ _ _) ty =
       <> show (pprint ty)
       <> "', but got a lambda: "
       <> show (pprint lam)
-typeCheck' i ctx (Let NoExtField v e b) ty = withKnownLevel i $ do
+typeCheck' i ctx (Let NoExtField v e b) ty = do
   (vty, e') <- typeInfer' i ctx e
   b' <-
     thawLocal
@@ -391,7 +391,7 @@ typeCheck' _ _ inj@Inj {} ty =
       <> show (pprint ty)
       <> "', but got a variant: "
       <> show (pprint inj)
-typeCheck' i ctx (Case _ e (CaseAlts alts)) ty = withKnownLevel i $ do
+typeCheck' i ctx (Case _ e (CaseAlts alts)) ty = do
   (eTy, e') <- typeInfer' i ctx e
   case eTy ^? #_VVariant of
     Nothing ->
@@ -486,7 +486,7 @@ typeInfer' !i ctx ex@(App NoExtField f x) = do
           <> show (pprint f, pprint ty)
           <> "; during evaluating "
           <> show (pprint ex)
-typeInfer' i ctx (Lam NoExtField mv ty body) = withKnownLevel i $ do
+typeInfer' i ctx (Lam NoExtField mv ty body) = do
   !ty' <- typeCheck' i ctx ty VStar
   let ctx' = toEvalContext ctx
       !tyVal = eval ctx' ty'
@@ -511,7 +511,7 @@ typeInfer' i ctx (Lam NoExtField mv ty body) = withKnownLevel i $ do
         ty'
         body'
     )
-typeInfer' i ctx (Pi NoExtField mv arg ret) = withKnownLevel i $ do
+typeInfer' i ctx (Pi NoExtField mv arg ret) = do
   !arg' <- typeCheck' i ctx arg VStar
   let ctx' = toEvalContext ctx
       !t = eval ctx' arg'
@@ -523,7 +523,7 @@ typeInfer' i ctx (Pi NoExtField mv arg ret) = withKnownLevel i $ do
         (freezeBound 0 ret)
         VStar
   pure (VStar, Pi NoExtField mv arg' ret')
-typeInfer' i ctx (Sigma NoExtField mv arg ret) = withKnownLevel i $ do
+typeInfer' i ctx (Sigma NoExtField mv arg ret) = do
   !arg' <- typeCheck' i ctx arg VStar
   let ctx' = toEvalContext ctx
       !t = eval ctx' arg'
@@ -537,7 +537,7 @@ typeInfer' i ctx (Sigma NoExtField mv arg ret) = withKnownLevel i $ do
   pure (VStar, Sigma NoExtField mv arg' ret')
 typeInfer' _ _ (Pair c _ _) = noExtCon c
 typeInfer' _ _ (Split c _ _ _ _) = noExtCon c
-typeInfer' i ctx (Let NoExtField mv e b) = withKnownLevel i $ do
+typeInfer' i ctx (Let NoExtField mv e b) = do
   (!vty, !e') <- typeInfer' i ctx e
   (!ty, !b') <-
     Bi.bimap thawLocalVal thawLocal
@@ -586,7 +586,7 @@ typeInfer' i ctx (Open _ r b) = do
 typeInfer' i ctx (Variant NoExtField (VariantTags fs)) =
   (VStar,) . Variant NoExtField . VariantTags
     <$> traverse (traverse $ flip (typeCheck' i ctx) VStar) fs
-typeInfer' i ctx (Case NoExtField e (CaseAlts alts)) = withKnownLevel i $ do
+typeInfer' i ctx (Case NoExtField e (CaseAlts alts)) = do
   (eTy, e') <- typeInfer' i ctx e
   case eTy ^? #_VVariant of
     Nothing ->
@@ -655,7 +655,7 @@ toEvalName (Bound _ v) = Bound NoExtField v
 toEvalName (PrimName _ v) = PrimName NoExtField v
 toEvalName (XName (Local v)) = XName (EvLocal v)
 
-freezeBound :: forall m n. (KnownTypingMode m, KnownLevel n) => Int -> Expr (Typing m n) -> Expr (Typing m ('S n))
+freezeBound :: forall m n. (KnownTypingMode m) => Int -> Expr (Typing m n) -> Expr (Typing m ('S n))
 freezeBound !i (Ann c e ty) =
   Ann
     (case typingModeVal @m of SInfer -> c; SCheck -> c)
@@ -676,7 +676,11 @@ freezeBound i (Lam x mv ann body) =
     SCheck -> Lam x mv (freezeBound i <$> ann) $ freezeBound (i + 1) body
     SInfer -> Lam x mv (freezeBound i ann) $ freezeBound (i + 1) body
 freezeBound i (Pi c mv ann body) =
-  Pi (case typingModeVal @m of SInfer -> c; SCheck -> c) mv (freezeBound i ann) (freezeBound (i + 1) body)
+  Pi
+    (case typingModeVal @m of SInfer -> c; SCheck -> c)
+    mv
+    (freezeBound i ann)
+    (freezeBound (i + 1) body)
 freezeBound i (Sigma c mv ann body) =
   Sigma
     (case typingModeVal @m of SInfer -> c; SCheck -> c)
@@ -728,7 +732,6 @@ freezeBound i (Inj c l e) = Inj (case typingModeVal @m of SInfer -> c; SCheck ->
 
 freezeBoundName ::
   forall n m.
-  (KnownLevel n) =>
   Int ->
   Name (Typing m n) ->
   Name (Typing m ('S n))
