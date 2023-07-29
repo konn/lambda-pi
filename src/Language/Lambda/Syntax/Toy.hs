@@ -32,6 +32,8 @@ data L n where
 
 deriving instance Show (L n)
 
+deriving instance Eq (L n)
+
 newtype Quoted = Quoted Int
   deriving (Show, Eq, Ord, Generic)
   deriving newtype (Num)
