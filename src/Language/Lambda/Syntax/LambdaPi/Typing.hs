@@ -214,7 +214,7 @@ toEvalContext ctx =
 
 addLocal :: (KnownLevel n) => Type' n -> Context' n -> Context' ('S n)
 addLocal ty ctx =
-  let te = ThawEnv {singLocals = sLvl, curLvl = 0}
+  let te = ThawEnv {curLvl = 0}
    in ctx
         { locals =
             fmap
@@ -236,8 +236,8 @@ lookupName (XName (Local i)) ctx =
 lookupName (Global _ t) ctx = ctx ^? #globals . ix t
 lookupName _ _ = Nothing
 
-injValueN :: SLvl n -> Value' n -> Value' (S n)
-injValueN sn = injValueWith ThawEnv {singLocals = sn, curLvl = 0}
+injValueN :: Value' n -> Value' (S n)
+injValueN = injValueWith ThawEnv {curLvl = 0}
 
 typeCheck :: (HasCallStack) => Context' Z -> Expr (Checkable) -> Type -> Result (Expr Eval)
 typeCheck = typeCheck' SZ
@@ -260,7 +260,7 @@ typeCheck' i ctx (Pair NoExtField l r) (VSigma _ ty ty') = withKnownLevel i $ do
         (SS i)
         (addLocal ty ctx)
         (freezeBound 0 r)
-        (injValueN i $ ty' lVal)
+        (injValueN $ ty' lVal)
   pure $
     Pair
       BinderTypeSpec
@@ -283,17 +283,15 @@ typeCheck' i ctx (Split _ scrut2 lName rName body) splitRetType = withKnownLevel
           <$> typeCheck'
             (SS $ SS i)
             ( addLocal
-                ( injBinderN i splitSndType $
-                    vfree (injValueN i splitFstType) $
+                ( injBinder splitSndType $
+                    vfree (injValueN splitFstType) $
                       XName $
-                        EvLocal $
-                          sLvlToOrd i
+                        EvLocal Here
                 )
                 $ addLocal splitFstType ctx
             )
             (freezeBound 1 $ freezeBound 0 body)
-            ( injValueN (SS i) $
-                injValueN i splitRetType
+            ( injValueN $ injValueN splitRetType
             )
       pure $ Split SplitTypeInfo {..} scrut2' lName rName body'
     _ -> Left $ "A scrutinee of split-expression must be of Sigma-type, but has type : " <> show (pprint scrut2Ty)
@@ -336,7 +334,7 @@ typeCheck' i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = withKnownLevel i $ do
         (SS i)
         (addLocal ty ctx)
         (freezeBound 0 e)
-        (injBinderN i ty' $ vfree (injValueN i ty) $ XName $ EvLocal $ sLvlToOrd i)
+        (injBinder ty' $ vfree (injValueN ty) $ XName $ EvLocal Here)
   pure $
     Lam
       BinderTypeSpec
@@ -360,7 +358,7 @@ typeCheck' i ctx (Let NoExtField v e b) ty = withKnownLevel i $ do
         (SS i)
         (addLocal vty ctx)
         (freezeBound 0 b)
-        (injValueN i ty)
+        (injValueN ty)
   pure $ Let ty v e' b'
 typeCheck' i ctx (Open _ r b) ty = do
   (recType, e) <- typeInfer' i ctx r
@@ -430,7 +428,7 @@ typeCheck' i ctx (Case _ e (CaseAlts alts)) ty = withKnownLevel i $ do
                                 (SS i)
                                 (addLocal tty ctx)
                                 (freezeBound 0 bdy)
-                                (injValueN i ty)
+                                (injValueN ty)
                           pure
                             ( tty
                             , CaseAlt

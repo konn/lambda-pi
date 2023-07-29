@@ -47,7 +47,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   -- * ASTs
   quote,
   injValueWith,
-  injBinderN,
+  injBinder,
   projValueM,
   ThawEnv (..),
   Eval,
@@ -488,17 +488,17 @@ l @@ r = error $ "Could not apply: " <> show ((pprint l, typeOf l), (pprint r, t
 vapps :: NonEmpty (Type' n) -> Type' n
 vapps = foldl1 (@@)
 
-data ThawEnv n = ThawEnv {curLvl :: !Int, singLocals :: !(SLvl n)}
+newtype ThawEnv n = ThawEnv {curLvl :: Int}
   deriving (Show, Eq, Generic)
 
 type Thawer n = Reader (ThawEnv n)
 
 thawLocalVal :: (KnownLevel n) => Value' (S n) -> Value' n
 thawLocalVal =
-  flip runReader ThawEnv {curLvl = 0, singLocals = sLvl, ..} . thawLocalValM
+  flip runReader ThawEnv {curLvl = 0, ..} . thawLocalValM
 
 thawLocal :: forall n. (KnownLevel n) => Expr (Eval' (S n)) -> Expr (Eval' n)
-thawLocal = flip runReader ThawEnv {curLvl = 0, singLocals = sLvl, ..} . go
+thawLocal = flip runReader ThawEnv {curLvl = 0, ..} . go
   where
     go :: Expr (Eval' (S n)) -> Thawer n (Expr (Eval' n))
     go (Var ty name) = do
@@ -679,44 +679,44 @@ injValueWith e = withEnv e . injValueM
 
 injValueM :: Value' n -> Thawer n (Value' (S n))
 injValueM VStar = pure VStar
-injValueM (VPi an argTy body) = VPi an <$> injValueM argTy <*> injBinder body
-injValueM (VSigma an argTy body) = VSigma an <$> injValueM argTy <*> injBinder body
+injValueM (VPi an argTy body) = VPi an <$> injValueM argTy <*> injBinderM body
+injValueM (VSigma an argTy body) = VSigma an <$> injValueM argTy <*> injBinderM body
 injValueM (VPair bs an argTy body) =
   VPair <$> injBindTypeInfo bs <*> pure an <*> injValueM argTy <*> injValueM body
 injValueM (VLam ty n b) = do
   VLam
     <$> injBindTypeInfo ty
     <*> pure n
-    <*> injBinder b
+    <*> injBinderM b
 injValueM (VRecord flds) = VRecord <$> mapM injValueM flds
 injValueM (VMkRecord fldTys flds) =
   VMkRecord <$> mapM injValueM fldTys <*> mapM injValueM flds
 injValueM (VVariant alts) = VVariant <$> mapM injValueM alts
 injValueM (VInj alts tag x) =
   VInj <$> mapM injValueM alts <*> pure tag <*> injValueM x
-injValueM (VNeutral n) = VNeutral <$> injNeutral n
+injValueM (VNeutral n) = VNeutral <$> injNeutralM n
 
-injNeutral :: Neutral' n -> Thawer n (Neutral' (S n))
-injNeutral (NFree ty name) =
+injNeutralM :: Neutral' n -> Thawer n (Neutral' (S n))
+injNeutralM (NFree ty name) =
   NFree
     <$> injValueM ty
     <*> pure (forLocal name (XName . EvLocal . There))
-injNeutral (NApp ty l r) =
-  NApp <$> injValueM ty <*> injNeutral l <*> injValueM r
-injNeutral (NProjField ty e a) =
-  NProjField <$> injValueM ty <*> injNeutral e <*> pure a
-injNeutral (NSplit sinfo scrut ln rn b) =
+injNeutralM (NApp ty l r) =
+  NApp <$> injValueM ty <*> injNeutralM l <*> injValueM r
+injNeutralM (NProjField ty e a) =
+  NProjField <$> injValueM ty <*> injNeutralM e <*> pure a
+injNeutralM (NSplit sinfo scrut ln rn b) =
   NSplit
     <$> injSInfo sinfo
-    <*> injNeutral scrut
+    <*> injNeutralM scrut
     <*> pure ln
     <*> pure rn
     <*> injBinder2 b
-injNeutral (NCase cinfo scrut b) =
+injNeutralM (NCase cinfo scrut b) =
   NCase
     <$> injCInfo cinfo
-    <*> injNeutral scrut
-    <*> mapM injBinder b
+    <*> injNeutralM scrut
+    <*> mapM injBinderM b
 
 injCInfo :: CaseTypeInfo n -> Thawer n (CaseTypeInfo (S n))
 injCInfo cinfo = do
@@ -727,21 +727,21 @@ injCInfo cinfo = do
 injSInfo :: SplitTypeInfo n -> Thawer n (SplitTypeInfo (S n))
 injSInfo sinfo = do
   splitFstType <- injValueM $ sinfo ^. #splitFstType
-  splitSndType <- injBinder $ sinfo ^. #splitSndType
+  splitSndType <- injBinderM $ sinfo ^. #splitSndType
   splitRetType <- injValueM $ sinfo ^. #splitRetType
   pure SplitTypeInfo {..}
 
 injBindTypeInfo :: BinderTypeSpec n -> Thawer n (BinderTypeSpec (S n))
 injBindTypeInfo binfo = do
   argType <- injValueM $ binfo ^. #argType
-  bodyType <- injBinder $ binfo ^. #bodyType
+  bodyType <- injBinderM $ binfo ^. #bodyType
   pure BinderTypeSpec {..}
 
-injBinderN :: SLvl n -> (Value' n -> Value' n) -> Value' (S n) -> Value' (S n)
-injBinderN n = flip runReader ThawEnv {curLvl = 0, singLocals = n} . injBinder
+injBinder :: (Value' n -> Value' n) -> Value' (S n) -> Value' (S n)
+injBinder = flip runReader ThawEnv {curLvl = 0} . injBinderM
 
-injBinder :: (Value' n -> Value' n) -> Thawer n (Value' (S n) -> Value' (S n))
-injBinder f = asks $ \e -> injValueWith e . f . withEnv e . projValueM
+injBinderM :: (Value' n -> Value' n) -> Thawer n (Value' (S n) -> Value' (S n))
+injBinderM f = asks $ \e -> injValueWith e . f . withEnv e . projValueM
 
 injBinder2 :: (Value' n -> Value' n -> Value' n) -> Thawer n (Value' (S n) -> Value' (S n) -> Value' (S n))
 injBinder2 f = asks $ \e l r ->
