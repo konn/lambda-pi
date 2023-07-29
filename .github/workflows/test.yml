@@ -24,10 +24,10 @@ jobs:
         echo "PACKAGE_FILE_HASH=${PACKAGE_FILE_HASH}" >> "${GITHUB_ENV}"
         echo "package-hash=${PACKAGE_FILE_HASH}" >> "${GITHUB_OUTPUT}"
 
-        STORE_CACHE_KEY="ubuntu-9.2.8-cabal-store-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}"
+        STORE_CACHE_KEY="ubuntu-9.4.5-cabal-store-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}"
         echo "store-cache-key=${STORE_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
         
-        DIST_CACHE_KEY="ubuntu-9.2.8-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}"
+        DIST_CACHE_KEY="ubuntu-9.4.5-dist-newstyle-${FREEZE_FILE_HASH}-${PACKAGE_FILE_HASH}-${HS_FILE_HASH}"
         echo "dist-cache-key=${DIST_CACHE_KEY}" >> "${GITHUB_OUTPUT}"
     - name: Restore ~/.cabal/store
       uses: actions/cache/restore@v3
@@ -35,8 +35,8 @@ jobs:
         path: ~/.cabal/store
         key: ${{steps.calc-cache-keys.outputs.store-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-cabal-store-${{steps.calc-cache-keys.outputs.project-hash}}-
-          ubuntu-9.2.8-cabal-store-
+          ubuntu-9.4.5-cabal-store-${{steps.calc-cache-keys.outputs.project-hash}}-
+          ubuntu-9.4.5-cabal-store-
 
     - name: Restore ./dist-newstyle
       uses: actions/cache/restore@v3
@@ -44,14 +44,14 @@ jobs:
         path: dist-newstyle
         key: ${{steps.calc-cache-keys.outputs.dist-cache-key}}
         restore-keys: |
-          ubuntu-9.2.8-dist-newstyle-${{steps.calc-cache-keys.outputs.project-hash}}-${{steps.calc-cache-keys.outputs.package-hash}}-
-          ubuntu-9.2.8-dist-newstyle-${{steps.calc-cache-keys.outputs.project-hash}}-
-          ubuntu-9.2.8-dist-newstyle-
+          ubuntu-9.4.5-dist-newstyle-${{steps.calc-cache-keys.outputs.project-hash}}-${{steps.calc-cache-keys.outputs.package-hash}}-
+          ubuntu-9.4.5-dist-newstyle-${{steps.calc-cache-keys.outputs.project-hash}}-
+          ubuntu-9.4.5-dist-newstyle-
     - name: Setup Haskell
       uses: haskell/actions/setup@v2
       with:
         cabal-version: 3.10.1.0
-        ghc-version: 9.2.8
+        ghc-version: 9.4.5
     - run: cabal update
     - name: Build dependencies
       run: |
