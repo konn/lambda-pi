@@ -10,12 +10,12 @@
 module Language.Lambda.Syntax.ToySpec (test_quoteUnquote, test_thawFreeze) where
 
 import Control.Monad ((<=<))
+import qualified Data.DList as DL
 import Data.Function (on)
 import qualified Data.List.NonEmpty as NE
 import Data.Ord (comparing)
 import Data.Void (Void)
 import Language.Lambda.Syntax.Toy
-import Numeric.Natural (Natural)
 import qualified Test.Falsify.Generator as F
 import Test.Falsify.Predicate ((.$))
 import qualified Test.Falsify.Predicate as P
@@ -36,10 +36,11 @@ test_thawFreeze :: TestTree
 test_thawFreeze = testProperty "thawLocal . freezeBound ≡ 0" $ do
   MkSomeSNat (sn :: SNat n) <- gen $ someSNat $ F.between (0, 10)
   collect "Local level" [fromSNat sn]
-  t <- gen $ closedTermWithLocals (levels sn) (F.between (0, 100))
+  t <- gen $ closedTermWithLocals (levels sn) (F.between (1, 100))
   collect "depth" [depth t]
   collect "width" [width t]
   collect "# locals" [localCount t]
+  collect "local depths" $ localDepths t
   assert $
     P.eq
       .$ ("t", t :: DeBruijn' (L n))
@@ -79,12 +80,13 @@ levels (SS n) = Here : map There (levels n)
 someSNat :: Range Word -> Gen SomeSNat
 someSNat ran = toSomeSNat <$> F.integral ran
 
-fromSomeSNat :: SomeSNat -> Word
-fromSomeSNat = go 0
+localDepths :: DeBruijn' v -> [Word]
+localDepths = DL.toList . go 0
   where
-    go :: Word -> SomeSNat -> Word
-    go !acc (MkSomeSNat SZ) = acc
-    go acc (MkSomeSNat sn) = go (acc + 1) $ MkSomeSNat sn
+    go !i (AppDB l r) = go i l <> go i r
+    go _ Var {} = mempty
+    go i Local {} = DL.singleton i
+    go i (LamDB e) = go (i + 1) e
 
 toSomeSNat :: Word -> SomeSNat
 toSomeSNat = go
