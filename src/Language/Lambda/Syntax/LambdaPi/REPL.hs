@@ -143,7 +143,7 @@ checkTypeM trm ty = do
   gamma <- typingContextM
   trm' <-
     either (throwM . TypeError) pure $
-      typeCheck' SZ gamma trm ty
+      typeCheck gamma trm ty
   evalCtx <- evalContextM
   pure $ eval evalCtx trm'
 
@@ -166,7 +166,7 @@ inferEvalM ::
 inferEvalM trm = do
   ctx <- typingContextM
   (typ, e') <-
-    either (throwM . TypeError) pure $ typeInfer' SZ ctx trm
+    either (throwM . TypeError) pure $ typeInfer ctx trm
   evalCtx <- evalContextM
   let !val = eval evalCtx e'
   pure (val, typ)

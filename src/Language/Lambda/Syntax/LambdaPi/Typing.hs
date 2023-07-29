@@ -43,8 +43,6 @@ module Language.Lambda.Syntax.LambdaPi.Typing (
   Neutral,
   typeCheck,
   typeInfer,
-  typeCheck',
-  typeInfer',
 
   -- * ASTs
   Typing,
@@ -239,25 +237,21 @@ lookupName _ _ = Nothing
 injValueN :: Value' n -> Value' (S n)
 injValueN = injValueWith ThawEnv {curLvl = 0}
 
-typeCheck :: (HasCallStack) => Context' Z -> Expr (Checkable) -> Type -> Result (Expr Eval)
-typeCheck = typeCheck' SZ
-
-typeCheck' :: (HasCallStack) => SLvl n -> Context' n -> Expr (Checkable' n) -> Type' n -> Result (Expr (Eval' n))
-typeCheck' i ctx (XExpr (Inf e)) ty = do
-  (ty', e') <- typeInfer' i ctx e
+typeCheck :: (HasCallStack) => Context' n -> Expr (Checkable' n) -> Type' n -> Result (Expr (Eval' n))
+typeCheck ctx (XExpr (Inf e)) ty = do
+  (ty', e') <- typeInfer ctx e
 
   unless (ty == ty') $
     Left $
       "Type mismatch: (expr, expected, actual) = "
         <> show (pprint e, pprint ty, pprint ty')
   pure e'
-typeCheck' i ctx (Pair NoExtField l r) (VSigma _ ty ty') = do
-  l' <- typeCheck' i ctx l ty
+typeCheck ctx (Pair NoExtField l r) (VSigma _ ty ty') = do
+  l' <- typeCheck ctx l ty
   let lVal = eval (toEvalContext ctx) l'
   r' <-
     thawLocal
-      <$> typeCheck'
-        (SS i)
+      <$> typeCheck
         (addLocal ty ctx)
         (freezeBound 0 r)
         (injValueN $ ty' lVal)
@@ -269,19 +263,18 @@ typeCheck' i ctx (Pair NoExtField l r) (VSigma _ ty ty') = do
         }
       l'
       r'
-typeCheck' _ _ Pair {} ty =
+typeCheck _ Pair {} ty =
   Left $
     "Expected a term of type `"
       <> show (pprint ty)
       <> "', but got a pair (sigma-type)."
-typeCheck' i ctx (Split _ scrut2 lName rName body) splitRetType = do
-  (scrut2Ty, scrut2') <- typeInfer' i ctx scrut2
+typeCheck ctx (Split _ scrut2 lName rName body) splitRetType = do
+  (scrut2Ty, scrut2') <- typeInfer ctx scrut2
   case scrut2Ty of
     VSigma _ splitFstType splitSndType -> do
       body' <-
         thawLocal . thawLocal
-          <$> typeCheck'
-            (SS $ SS i)
+          <$> typeCheck
             ( addLocal
                 ( injBinder splitSndType $
                     vfree (injValueN splitFstType) $
@@ -295,7 +288,7 @@ typeCheck' i ctx (Split _ scrut2 lName rName body) splitRetType = do
             )
       pure $ Split SplitTypeInfo {..} scrut2' lName rName body'
     _ -> Left $ "A scrutinee of split-expression must be of Sigma-type, but has type : " <> show (pprint scrut2Ty)
-typeCheck' i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord fldTys) = do
+typeCheck ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord fldTys) = do
   -- TODO: Consider structural subtyping
   fldTyped <-
     validationToEither $
@@ -307,7 +300,7 @@ typeCheck' i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord fldTys) = 
                   Bi.first
                     (DLNE.singleton . (("Field `" <> T.unpack fld <> "'") <>))
                     $ eitherToValidation
-                    $ typeCheck' i ctx f v
+                    $ typeCheck ctx f v
                 This {} ->
                   Failure $
                     DLNE.singleton $
@@ -320,18 +313,17 @@ typeCheck' i ctx (MkRecord NoExtField (MkRecordFields flds)) (VRecord fldTys) = 
             (HM.fromList flds)
             fldTys
   pure $ MkRecord fldTys $ MkRecordFields $ toOrderedList fldTyped
-typeCheck' _ _ mkRec@MkRecord {} ty =
+typeCheck _ mkRec@MkRecord {} ty =
   Left $
     "Expected a term of type `"
       <> show (pprint ty)
       <> "', but got a record: "
       <> show (pprint mkRec)
-typeCheck' _ _ (ProjField c _ _) _ = noExtCon c
-typeCheck' i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
+typeCheck _ (ProjField c _ _) _ = noExtCon c
+typeCheck ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
   e' <-
     thawLocal
-      <$> typeCheck'
-        (SS i)
+      <$> typeCheck
         (addLocal ty ctx)
         (freezeBound 0 e)
         (injBinder ty' $ vfree (injValueN ty) $ XName $ EvLocal Here)
@@ -344,37 +336,36 @@ typeCheck' i ctx (Lam NoExtField v _ e) (VPi _ ty ty') = do
       v
       (quote 0 ty)
       e'
-typeCheck' _ _ lam@(Lam NoExtField _ _ _) ty =
+typeCheck _ lam@(Lam NoExtField _ _ _) ty =
   Left $
     "Expected a term of type `"
       <> show (pprint ty)
       <> "', but got a lambda: "
       <> show (pprint lam)
-typeCheck' i ctx (Let NoExtField v e b) ty = do
-  (vty, e') <- typeInfer' i ctx e
+typeCheck ctx (Let NoExtField v e b) ty = do
+  (vty, e') <- typeInfer ctx e
   b' <-
     thawLocal
-      <$> typeCheck'
-        (SS i)
+      <$> typeCheck
         (addLocal vty ctx)
         (freezeBound 0 b)
         (injValueN ty)
   pure $ Let ty v e' b'
-typeCheck' i ctx (Open _ r b) ty = do
-  (recType, e) <- typeInfer' i ctx r
+typeCheck ctx (Open _ r b) ty = do
+  (recType, e) <- typeInfer ctx r
   -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
   case recType of
     VRecord fldTys -> do
       let newCtx = HM.map (`VarInfo` Nothing) fldTys
           ctx' = ctx & #globals %~ (newCtx <>)
       -- FIXME: We have to treat substitution correctly (back to BoundVar)
-      b' <- typeCheck' i ctx' b ty
+      b' <- typeCheck ctx' b ty
       pure $ Open ty e b'
     otr ->
       Left $
         "open expression requires a record, but got a term of type: "
           <> show (pprint otr)
-typeCheck' i ctx inj@(Inj _ l e) vvar@(VVariant tags) =
+typeCheck ctx inj@(Inj _ l e) vvar@(VVariant tags) =
   case HM.lookup l tags of
     Nothing ->
       Left $
@@ -384,15 +375,15 @@ typeCheck' i ctx inj@(Inj _ l e) vvar@(VVariant tags) =
           <> show (pprint inj)
           <> "is not in the expected variant tags: "
           <> show vvar
-    Just ty -> Inj tags l <$> typeCheck' i ctx e ty
-typeCheck' _ _ inj@Inj {} ty =
+    Just ty -> Inj tags l <$> typeCheck ctx e ty
+typeCheck _ inj@Inj {} ty =
   Left $
     "Expected type `"
       <> show (pprint ty)
       <> "', but got a variant: "
       <> show (pprint inj)
-typeCheck' i ctx (Case _ e (CaseAlts alts)) ty = do
-  (eTy, e') <- typeInfer' i ctx e
+typeCheck ctx (Case _ e (CaseAlts alts)) ty = do
+  (eTy, e') <- typeInfer ctx e
   case eTy ^? #_VVariant of
     Nothing ->
       Left $
@@ -424,8 +415,7 @@ typeCheck' i ctx (Case _ e (CaseAlts alts)) ty = do
                         $ do
                           bdy' <-
                             thawLocal
-                              <$> typeCheck'
-                                (SS i)
+                              <$> typeCheck
                                 (addLocal tty ctx)
                                 (freezeBound 0 bdy)
                                 (injValueN ty)
@@ -447,37 +437,34 @@ typeCheck' i ctx (Case _ e (CaseAlts alts)) ty = do
         $ CaseAlts
         $ toOrderedList
         $ snd <$> rets
-typeCheck' _ _ (Ann c _ _) _ = noExtCon c
-typeCheck' _ _ (Star c) _ = noExtCon c
-typeCheck' _ _ (Var c _) _ = noExtCon c
-typeCheck' _ _ (Pi c _ _ _) _ = noExtCon c
-typeCheck' _ _ (Sigma c _ _ _) _ = noExtCon c
-typeCheck' _ _ (App c _ _) _ = noExtCon c
-typeCheck' _ _ (Record c _) _ = noExtCon c
-typeCheck' _ _ (Variant c _) _ = noExtCon c
+typeCheck _ (Ann c _ _) _ = noExtCon c
+typeCheck _ (Star c) _ = noExtCon c
+typeCheck _ (Var c _) _ = noExtCon c
+typeCheck _ (Pi c _ _ _) _ = noExtCon c
+typeCheck _ (Sigma c _ _ _) _ = noExtCon c
+typeCheck _ (App c _ _) _ = noExtCon c
+typeCheck _ (Record c _) _ = noExtCon c
+typeCheck _ (Variant c _) _ = noExtCon c
 
-typeInfer :: (HasCallStack) => Context' 'Z -> Expr Inferable -> Result (Type, Expr Eval)
-typeInfer = typeInfer' SZ
-
-typeInfer' :: (HasCallStack) => SLvl n -> Context' n -> Expr (Inferable' n) -> Result (Type' n, Expr (Eval' n))
-typeInfer' !i ctx (Ann _ e rho) = do
-  rho' <- typeCheck' i ctx rho VStar
+typeInfer :: (HasCallStack) => Context' n -> Expr (Inferable' n) -> Result (Type' n, Expr (Eval' n))
+typeInfer ctx (Ann _ e rho) = do
+  rho' <- typeCheck ctx rho VStar
   let !t = eval (toEvalContext ctx) rho'
-  e' <- typeCheck' i ctx e t
+  e' <- typeCheck ctx e t
   pure (t, Ann t e' rho')
-typeInfer' _ _ Star {} = pure (VStar, Star NoExtField)
-typeInfer' _ _ (Var _ (PrimName _ p)) =
+typeInfer _ Star {} = pure (VStar, Star NoExtField)
+typeInfer _ (Var _ (PrimName _ p)) =
   let pTy = inferPrim p
    in pure (pTy, Var pTy $ PrimName NoExtField p)
-typeInfer' _ ctx (Var _ x) = case lookupName x ctx of
+typeInfer ctx (Var _ x) = case lookupName x ctx of
   Just VarInfo {varType = t} ->
     pure (t, Var t $ toEvalName x)
   Nothing -> Left $ "Unknown identifier: " <> show x
-typeInfer' !i ctx ex@(App NoExtField f x) = do
+typeInfer ctx ex@(App NoExtField f x) = do
   let ctx' = toEvalContext ctx
-  typeInfer' i ctx f >>= \case
+  typeInfer ctx f >>= \case
     (VPi _ t t', f') -> do
-      x' <- typeCheck' i ctx x t
+      x' <- typeCheck ctx x t
       let retTy = t' $ eval ctx' x'
       pure (retTy, App retTy f' x')
     (ty, _) ->
@@ -486,18 +473,15 @@ typeInfer' !i ctx ex@(App NoExtField f x) = do
           <> show (pprint f, pprint ty)
           <> "; during evaluating "
           <> show (pprint ex)
-typeInfer' i ctx (Lam NoExtField mv ty body) = do
-  !ty' <- typeCheck' i ctx ty VStar
+typeInfer ctx (Lam NoExtField mv ty body) = do
+  !ty' <- typeCheck ctx ty VStar
   let ctx' = toEvalContext ctx
       !tyVal = eval ctx' ty'
   (!bodyTy, !body') <-
     -- Generally, the first mapping on returned type
     -- is not needed due to eigenvariable condition.
     Bi.bimap thawLocalVal thawLocal
-      <$> typeInfer'
-        (SS i)
-        (addLocal tyVal ctx)
-        (freezeBound 0 body)
+      <$> typeInfer (addLocal tyVal ctx) (freezeBound 0 body)
   let lamRetTy v = substBound 0 v bodyTy
       !lamTy = VPi mv tyVal lamRetTy
   pure
@@ -511,51 +495,40 @@ typeInfer' i ctx (Lam NoExtField mv ty body) = do
         ty'
         body'
     )
-typeInfer' i ctx (Pi NoExtField mv arg ret) = do
-  !arg' <- typeCheck' i ctx arg VStar
+typeInfer ctx (Pi NoExtField mv arg ret) = do
+  !arg' <- typeCheck ctx arg VStar
   let ctx' = toEvalContext ctx
       !t = eval ctx' arg'
   !ret' <-
     thawLocal
-      <$> typeCheck'
-        (SS i)
-        (addLocal t ctx)
-        (freezeBound 0 ret)
-        VStar
+      <$> typeCheck (addLocal t ctx) (freezeBound 0 ret) VStar
   pure (VStar, Pi NoExtField mv arg' ret')
-typeInfer' i ctx (Sigma NoExtField mv arg ret) = do
-  !arg' <- typeCheck' i ctx arg VStar
+typeInfer ctx (Sigma NoExtField mv arg ret) = do
+  !arg' <- typeCheck ctx arg VStar
   let ctx' = toEvalContext ctx
       !t = eval ctx' arg'
   !ret' <-
     thawLocal
-      <$> typeCheck'
-        (SS i)
-        (addLocal t ctx)
-        (freezeBound 0 ret)
-        VStar
+      <$> typeCheck (addLocal t ctx) (freezeBound 0 ret) VStar
   pure (VStar, Sigma NoExtField mv arg' ret')
-typeInfer' _ _ (Pair c _ _) = noExtCon c
-typeInfer' _ _ (Split c _ _ _ _) = noExtCon c
-typeInfer' i ctx (Let NoExtField mv e b) = do
-  (!vty, !e') <- typeInfer' i ctx e
+typeInfer _ (Pair c _ _) = noExtCon c
+typeInfer _ (Split c _ _ _ _) = noExtCon c
+typeInfer ctx (Let NoExtField mv e b) = do
+  (!vty, !e') <- typeInfer ctx e
   (!ty, !b') <-
     Bi.bimap thawLocalVal thawLocal
-      <$> typeInfer'
-        (SS i)
-        (addLocal vty ctx)
-        (freezeBound 0 b)
+      <$> typeInfer (addLocal vty ctx) (freezeBound 0 b)
   pure (ty, Let ty mv e' b')
-typeInfer' i ctx (Record NoExtField flds) =
+typeInfer ctx (Record NoExtField flds) =
   (VStar,) . Record NoExtField . RecordFieldTypes
-    <$> traverse (traverse $ flip (typeCheck' i ctx) VStar) (recFieldTypes flds)
-typeInfer' i ctx (MkRecord NoExtField (MkRecordFields flds)) = do
-  fldTysFlds <- HM.fromList <$> traverse (traverse (typeInfer' i ctx)) flds
+    <$> traverse (traverse $ flip (typeCheck ctx) VStar) (recFieldTypes flds)
+typeInfer ctx (MkRecord NoExtField (MkRecordFields flds)) = do
+  fldTysFlds <- HM.fromList <$> traverse (traverse (typeInfer ctx)) flds
   let fldTys = HM.map fst fldTysFlds
       flds' = MkRecordFields $ toOrderedList $ HM.map snd fldTysFlds
   pure (VRecord fldTys, MkRecord fldTys flds')
-typeInfer' !i ctx (ProjField NoExtField e f) =
-  typeInfer' i ctx e >>= \case
+typeInfer ctx (ProjField NoExtField e f) =
+  typeInfer ctx e >>= \case
     (VRecord flds, e') ->
       case HM.lookup f flds of
         Just ty -> pure (ty, ProjField ty e' f)
@@ -569,25 +542,25 @@ typeInfer' !i ctx (ProjField NoExtField e f) =
       Left $
         "LHS of record projection must be record, but got: "
           <> show (e, pprint ty)
-typeInfer' i ctx (Open _ r b) = do
-  (recType, r') <- typeInfer' i ctx r
+typeInfer ctx (Open _ r b) = do
+  (recType, r') <- typeInfer ctx r
   -- FIXME: we need the explicit list of fields after structural subtyping is introduced; otherwise the system is unsound!
   case recType of
     VRecord fldTys -> do
       let newCtx = HM.map (`VarInfo` Nothing) fldTys
           ctx' = ctx & #globals %~ (newCtx <>)
       -- FIXME: We have to treat substitution correctly (back to BoundVar)
-      (retTy, b') <- typeInfer' i ctx' b
+      (retTy, b') <- typeInfer ctx' b
       pure (retTy, Open retTy r' b')
     otr ->
       Left $
         "open expression requires a record, but got a term of type: "
           <> show (pprint otr)
-typeInfer' i ctx (Variant NoExtField (VariantTags fs)) =
+typeInfer ctx (Variant NoExtField (VariantTags fs)) =
   (VStar,) . Variant NoExtField . VariantTags
-    <$> traverse (traverse $ flip (typeCheck' i ctx) VStar) fs
-typeInfer' i ctx (Case NoExtField e (CaseAlts alts)) = do
-  (eTy, e') <- typeInfer' i ctx e
+    <$> traverse (traverse $ flip (typeCheck ctx) VStar) fs
+typeInfer ctx (Case NoExtField e (CaseAlts alts)) = do
+  (eTy, e') <- typeInfer ctx e
   case eTy ^? #_VVariant of
     Nothing ->
       Left $
@@ -617,10 +590,7 @@ typeInfer' i ctx (Case NoExtField e (CaseAlts alts)) = do
                         )
                         $ eitherToValidation
                         $ bimap thawLocalVal (CaseAlt NoExtField mv . thawLocal)
-                          <$> typeInfer'
-                            (SS i)
-                            (addLocal tty ctx)
-                            (freezeBound 0 bdy)
+                          <$> typeInfer (addLocal tty ctx) (freezeBound 0 bdy)
                 )
                 (HM.fromList alts)
                 tagTys
@@ -646,8 +616,8 @@ typeInfer' i ctx (Case NoExtField e (CaseAlts alts)) = do
           Left $
             "Type mismatch: distinct returned types: "
               <> show (map pprint $ Map.keys tyMaps)
-typeInfer' _ _ (Inj c _ _) = noExtCon c
-typeInfer' _ _ (XExpr c) = case c of {}
+typeInfer _ (Inj c _ _) = noExtCon c
+typeInfer _ (XExpr c) = case c of {}
 
 toEvalName :: Name (Typing m n) -> Name (Eval' n)
 toEvalName (Global _ v) = Global NoExtField v
