@@ -20,7 +20,7 @@ import Text.PrettyPrint (parens)
 five :: Value
 five = iterate (vSucc @@) vZero !! 5
 
-evalCases :: HasCallStack => [(Expr Eval, Value)]
+evalCases :: (HasCallStack) => [(Expr Eval, Value)]
 evalCases =
   [ (inferred "5", five)
   , (inferred "natElim (λ n. ℕ) 3 (λ k. succ) 2", five)
@@ -30,11 +30,11 @@ evalCases =
 (~>) :: Type -> Type -> Type
 l ~> r = VPi Anonymous l (const r)
 
-inf :: HasCallStack => Text -> Expr Inferable
+inf :: (HasCallStack) => Text -> Expr Inferable
 inf = fromJust . toInferable . renameExpr . either error id . parseOnly exprP
 
-inferred :: HasCallStack => Text -> Expr Eval
-inferred = either error snd . typeInfer 0 mempty . inf
+inferred :: (HasCallStack) => Text -> Expr Eval
+inferred = either error snd . typeInfer mempty . inf
 
 newtype VerboseValue = VerboseValue {getValue :: Value}
   deriving newtype (Eq)

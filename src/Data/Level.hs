@@ -22,6 +22,7 @@ module Data.Level (
   type Z,
   type S,
   Ordinal (..),
+  sLvlToOrd,
   fromOrd,
   predOrd,
   projOrd,
@@ -100,3 +101,7 @@ fromOrd = go 0
     go :: Int -> Ordinal k -> Int
     go !acc Here = acc
     go acc (There n) = go (acc + 1) n
+
+sLvlToOrd :: SLvl n -> Ordinal (S n)
+sLvlToOrd SZ = Here
+sLvlToOrd (SS sn) = There (sLvlToOrd sn)

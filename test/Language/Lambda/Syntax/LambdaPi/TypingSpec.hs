@@ -9,7 +9,7 @@ import qualified Data.Bifunctor as Bi
 import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Eval (Neutral (..), vSucc, vZero, (@@))
+import Language.Lambda.Syntax.LambdaPi.Eval (vSucc, vZero, (@@))
 import Language.Lambda.Syntax.LambdaPi.Parser
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
@@ -104,7 +104,7 @@ test_typeInfer =
   testGroup
     "typeInfer"
     [ testCaseSteps (show $ parens (pprint e)) $ \step ->
-      case typeInfer 0 mempty e of
+      case typeInfer mempty e of
         Left err -> assertFailure $ "Typing error: " <> err
         Right (ty0, eTy) -> do
           step "Check if type matches"
@@ -121,7 +121,7 @@ test_typeCheck =
     "typeCheck"
     [ testCaseSteps (show $ parens (pprint e)) $ \step -> do
       step "check type"
-      case typeCheck 0 mempty e ty of
+      case typeCheck mempty e ty of
         Left err -> assertFailure $ "Typing error: " <> err
         Right eTy -> do
           step "Check if typed term dosn't contain bottom"

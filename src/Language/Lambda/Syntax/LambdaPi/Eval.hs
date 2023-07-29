@@ -9,7 +9,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -18,11 +17,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Redundant bracket" #-}
 
 module Language.Lambda.Syntax.LambdaPi.Eval (
   -- * Type checking and inference
-  Env (..),
+  Env' (..),
+  Env,
   Value' (..),
+  Value,
   (@@),
   Type,
   Type',
@@ -42,6 +46,10 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
 
   -- * ASTs
   quote,
+  injValueWith,
+  injBinderN,
+  projValueM,
+  ThawEnv (..),
   Eval,
   Eval',
   CaseTypeInfo (..),
@@ -219,12 +227,13 @@ typeOfNeutral (NSplit ty _ _ _ _) = splitRetType ty
 vfree :: Type' n -> Name (Eval' n) -> Value' n
 vfree = fmap VNeutral . NFree
 
-data Env n = Env
+type Env = Env' Z
+data Env' n = Env
   { namedBinds :: !(HM.HashMap Text (Value' n))
   , boundValues :: ![Value' n]
   }
   deriving (Show, Generic)
-  deriving (Semigroup, Monoid) via GenericSemigroupMonoid (Env n)
+  deriving (Semigroup, Monoid) via GenericSemigroupMonoid (Env' n)
 
 instance Eq (Value' n) where
   (==) = (==) `on` quote 0
@@ -314,7 +323,7 @@ boundFree :: Type' n -> Int -> Name (Eval' n) -> Expr (Eval' n)
 boundFree ty i (XName (Quote k)) = Var ty $ Bound NoExtField $ i - k - 1
 boundFree ty _ x = Var ty x
 
-eval :: (HasCallStack) => Env n -> Expr (Eval' n) -> Value' n
+eval :: (HasCallStack) => Env' n -> Expr (Eval' n) -> Value' n
 eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var ty fv) =
@@ -734,6 +743,9 @@ injBindTypeInfo binfo = do
   argType <- injValueM $ binfo ^. #argType
   bodyType <- injBinder $ binfo ^. #bodyType
   pure BinderTypeSpec {..}
+
+injBinderN :: SLvl n -> (Value' n -> Value' n) -> Value' (S n) -> Value' (S n)
+injBinderN n = flip runReader ThawEnv {curLvl = 0, singLocals = n} . injBinder
 
 injBinder :: (Value' n -> Value' n) -> Thawer n (Value' (S n) -> Value' (S n))
 injBinder f = asks $ \e -> injValueWith e . f . withEnv e . projValueM
