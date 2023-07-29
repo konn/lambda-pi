@@ -177,7 +177,9 @@ import Text.PrettyPrint.Monadic
 
 data Located e a = Loc {location :: !e, unLoc :: !a}
   deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-  deriving anyclass (Bitraversable)
+
+instance Bitraversable Located where
+  bitraverse f g (Loc l a) = Loc <$> f l <*> g a
 
 instance Bifunctor Located where
   bimap = bimapDefault
