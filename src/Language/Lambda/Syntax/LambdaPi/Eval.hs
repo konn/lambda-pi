@@ -667,12 +667,18 @@ mapLocalM f = \case
 forLocal :: Name (Eval' n) -> (Ordinal n -> Name (Eval' m)) -> Name (Eval' m)
 forLocal = flip mapLocal
 
+forLocalM ::
+  (Applicative f) =>
+  Name (Eval' n) ->
+  (Ordinal n -> f (Name (Eval' m))) ->
+  f (Name (Eval' m))
+forLocalM = flip mapLocalM
+
 thawName :: Name (Eval' (S n)) -> Thawer n (Name (Eval' n))
-thawName =
-  mapLocalM $ \k -> do
-    case predOrd k of
-      Nothing -> views #curLvl $ Bound NoExtField
-      Just l -> pure $ XName $ EvLocal l
+thawName = mapLocalM $ \k -> do
+  case predOrd k of
+    Nothing -> views #curLvl $ Bound NoExtField
+    Just l -> pure $ XName $ EvLocal l
 
 injValueWith :: ThawEnv n -> Value' n -> Value' (S n)
 injValueWith e = withEnv e . injValueM

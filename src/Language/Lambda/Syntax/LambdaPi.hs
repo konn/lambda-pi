@@ -226,10 +226,10 @@ data Expr phase
   | XExpr (XExpr phase)
   deriving (Generic)
 
-_Var :: Generic (Expr p) => Prism' (Expr p) (XVar p, Name p)
+_Var :: (Generic (Expr p)) => Prism' (Expr p) (XVar p, Name p)
 _Var = #_Var
 
-deriving instance FieldC NFData (Expr p) => NFData (Expr p)
+deriving instance (FieldC NFData (Expr p)) => NFData (Expr p)
 
 deriving instance (Data p, FieldC Data (Expr p)) => Data (Expr p)
 
@@ -259,17 +259,17 @@ instance Ord AlphaName where
   (>) = const $ const False
   (>=) = const $ const True
 
-instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
+instance (GPlated (Expr phase) (Rep (Expr phase))) => Plated (Expr phase) where
   plate = gplate
   {-# INLINE plate #-}
 
-deriving instance FieldC Show (Expr phase) => Show (Expr phase)
+deriving instance (FieldC Show (Expr phase)) => Show (Expr phase)
 
-deriving instance FieldC Eq (Expr phase) => Eq (Expr phase)
+deriving instance (FieldC Eq (Expr phase)) => Eq (Expr phase)
 
-deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
+deriving instance (FieldC Ord (Expr phase)) => Ord (Expr phase)
 
-deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
+deriving anyclass instance (FieldC Hashable (Expr phase)) => Hashable (Expr phase)
 
 instance Pretty e Prim where
   pretty Unit = "Unit"
@@ -291,16 +291,16 @@ instance Pretty e NoExtCon where
   pretty = noExtCon
 
 data Name p
-  = Global (XGlobal p) Text
-  | Bound (XBound p) Int
-  | PrimName (XPrimName p) Prim
+  = Global (XGlobal p) !Text
+  | Bound (XBound p) !Int
+  | PrimName (XPrimName p) !Prim
   | XName (XName p)
   deriving (Generic)
 
 _XName :: Prism' (Name p) (XName p)
 _XName = #_XName
 
-deriving anyclass instance FieldC NFData (Name p) => NFData (Name p)
+deriving anyclass instance (FieldC NFData (Name p)) => NFData (Name p)
 
 deriving instance (Data p, FieldC Data (Name p)) => Data (Name p)
 
@@ -310,13 +310,13 @@ type family XBound p
 
 type family XPrimName p
 
-deriving instance FieldC Show (Name p) => Show (Name p)
+deriving instance (FieldC Show (Name p)) => Show (Name p)
 
-deriving instance FieldC Eq (Name p) => Eq (Name p)
+deriving instance (FieldC Eq (Name p)) => Eq (Name p)
 
-deriving instance FieldC Ord (Name p) => Ord (Name p)
+deriving instance (FieldC Ord (Name p)) => Ord (Name p)
 
-deriving anyclass instance FieldC Hashable (Name p) => Hashable (Name p)
+deriving anyclass instance (FieldC Hashable (Name p)) => Hashable (Name p)
 
 type family XName p
 
@@ -419,12 +419,12 @@ deriving instance (Data (RecordFieldType p), Data p) => Data (RecordFieldTypes p
 deriving newtype instance (NFData (RecordFieldType p)) => NFData (RecordFieldTypes p)
 
 deriving instance
-  Show (RecordFieldType p) => Show (RecordFieldTypes p)
+  (Show (RecordFieldType p)) => Show (RecordFieldTypes p)
 
-instance Eq (RecordFieldType p) => Eq (RecordFieldTypes p) where
+instance (Eq (RecordFieldType p)) => Eq (RecordFieldTypes p) where
   (==) = (==) `on` Map.fromList . recFieldTypes
 
-instance Ord (RecordFieldType p) => Ord (RecordFieldTypes p) where
+instance (Ord (RecordFieldType p)) => Ord (RecordFieldTypes p) where
   compare = comparing $ Map.fromList . recFieldTypes
 
 type family XProjField p
@@ -440,17 +440,17 @@ newtype MkRecordFields p = MkRecordFields {mkRecFields :: [(Text, RecordField p)
 
 deriving instance (Data p, Data (RecordField p)) => Data (MkRecordFields p)
 
-deriving instance Show (RecordField p) => Show (MkRecordFields p)
+deriving instance (Show (RecordField p)) => Show (MkRecordFields p)
 
-instance Eq (RecordField p) => Eq (MkRecordFields p) where
+instance (Eq (RecordField p)) => Eq (MkRecordFields p) where
   (==) = (==) `on` Map.fromList . mkRecFields
 
-instance Ord (RecordField p) => Ord (MkRecordFields p) where
+instance (Ord (RecordField p)) => Ord (MkRecordFields p) where
   compare = comparing $ Map.fromList . mkRecFields
 
-deriving anyclass instance NFData (RecordField p) => NFData (MkRecordFields p)
+deriving anyclass instance (NFData (RecordField p)) => NFData (MkRecordFields p)
 
-deriving anyclass instance Hashable (RecordField p) => Hashable (MkRecordFields p)
+deriving anyclass instance (Hashable (RecordField p)) => Hashable (MkRecordFields p)
 
 type family XOpen p
 
@@ -463,16 +463,16 @@ type family XVariant p
 newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantArgType p)]}
   deriving (Generic)
 
-deriving newtype instance NFData (VariantArgType p) => NFData (VariantTags p)
+deriving newtype instance (NFData (VariantArgType p)) => NFData (VariantTags p)
 
 deriving instance (Data (VariantArgType p), Data p) => Data (VariantTags p)
 
-deriving instance Show (VariantArgType p) => Show (VariantTags p)
+deriving instance (Show (VariantArgType p)) => Show (VariantTags p)
 
-instance Eq (VariantArgType p) => Eq (VariantTags p) where
+instance (Eq (VariantArgType p)) => Eq (VariantTags p) where
   (==) = (==) `on` Map.fromList . variantTags
 
-instance Ord (VariantArgType p) => Ord (VariantTags p) where
+instance (Ord (VariantArgType p)) => Ord (VariantTags p) where
   compare = comparing $ Map.fromList . variantTags
 
 type family VariantArgType p
@@ -499,32 +499,32 @@ data CaseAlt p = CaseAlt
   deriving (Generic)
 
 deriving anyclass instance
-  FieldC NFData (CaseAlt p) => NFData (CaseAlt p)
+  (FieldC NFData (CaseAlt p)) => NFData (CaseAlt p)
 
 deriving instance (Data p, FieldC Data (CaseAlt p)) => Data (CaseAlt p)
 
-deriving instance FieldC Show (CaseAlt p) => Show (CaseAlt p)
+deriving instance (FieldC Show (CaseAlt p)) => Show (CaseAlt p)
 
-deriving instance FieldC Eq (CaseAlt p) => Eq (CaseAlt p)
+deriving instance (FieldC Eq (CaseAlt p)) => Eq (CaseAlt p)
 
-deriving instance FieldC Ord (CaseAlt p) => Ord (CaseAlt p)
+deriving instance (FieldC Ord (CaseAlt p)) => Ord (CaseAlt p)
 
-deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlt p)
+deriving anyclass instance (FieldC Hashable (CaseAlt p)) => Hashable (CaseAlt p)
 
 newtype CaseAlts p = CaseAlts {getCaseAlts :: [(Text, CaseAlt p)]}
   deriving (Generic)
 
-deriving newtype instance NFData (CaseAlt p) => NFData (CaseAlts p)
+deriving newtype instance (NFData (CaseAlt p)) => NFData (CaseAlts p)
 
 deriving instance (Data p, Data (CaseAlt p)) => Data (CaseAlts p)
 
-deriving instance FieldC Show (CaseAlt p) => Show (CaseAlts p)
+deriving instance (FieldC Show (CaseAlt p)) => Show (CaseAlts p)
 
-deriving instance FieldC Eq (CaseAlt p) => Eq (CaseAlts p)
+deriving instance (FieldC Eq (CaseAlt p)) => Eq (CaseAlts p)
 
-deriving instance FieldC Ord (CaseAlt p) => Ord (CaseAlts p)
+deriving instance (FieldC Ord (CaseAlt p)) => Ord (CaseAlts p)
 
-deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlts p)
+deriving anyclass instance (FieldC Hashable (CaseAlt p)) => Hashable (CaseAlts p)
 
 type family XExpr p
 
@@ -536,7 +536,7 @@ data PrettyEnv = PrettyEnv
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid PrettyEnv
 
 class VarLike v where
-  varName :: MonadReader PrettyEnv m => v -> m (Maybe Text)
+  varName :: (MonadReader PrettyEnv m) => v -> m (Maybe Text)
 
 instance VarLike DepName where
   varName Indep = pure Nothing
@@ -549,7 +549,7 @@ instance VarLike Text where
 instance VarLike (Maybe Text) where
   varName = pure
 
-instance VarLike (XName p) => VarLike (Name p) where
+instance (VarLike (XName p)) => VarLike (Name p) where
   {-   varName (Local _ i) = do
       mtn <- preview $ #boundVars . ix i
       case mtn of
@@ -574,12 +574,12 @@ class HasBindeeType v where
   type BindeeType v
   type BindeeType v = v
   bindeeType :: v -> Maybe (BindeeType v)
-  default bindeeType :: BindeeType v ~ v => v -> Maybe (BindeeType v)
+  default bindeeType :: (BindeeType v ~ v) => v -> Maybe (BindeeType v)
   bindeeType = Just
 
 instance HasBindeeType (Expr m)
 
-instance HasBindeeType e => HasBindeeType (Maybe e) where
+instance (HasBindeeType e) => HasBindeeType (Maybe e) where
   type BindeeType (Maybe e) = BindeeType e
   bindeeType = (bindeeType =<<)
 
@@ -593,7 +593,7 @@ l <@> r =
 data PrettyName = PrettyName {rawName :: !Text, unambName :: !Text}
   deriving (Show, Eq, Ord, Generic)
 
-toPrettyName :: VarLike v => Text -> v -> DocM PrettyEnv PrettyName
+toPrettyName :: (VarLike v) => Text -> v -> DocM PrettyEnv PrettyName
 toPrettyName defName v = do
   var <- fromMaybe defName <$> varName v
   lvl <- views (#levels . at var) (fromMaybe 0)
@@ -770,7 +770,7 @@ instance
       ]
   pretty (XExpr e) = pretty e
 
-tshow :: Show a => a -> Text
+tshow :: (Show a) => a -> Text
 tshow = T.pack . show
 
 instantiate :: Text -> DocM PrettyEnv () -> DocM PrettyEnv ()
@@ -782,5 +782,5 @@ instantiate var act = do
     )
     act
 
-pprint :: Pretty PrettyEnv a => a -> Doc
+pprint :: (Pretty PrettyEnv a) => a -> Doc
 pprint = execDocM (mempty @PrettyEnv) . pretty

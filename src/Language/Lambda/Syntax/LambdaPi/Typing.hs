@@ -478,8 +478,6 @@ typeInfer ctx (Lam NoExtField mv ty body) = do
   let ctx' = toEvalContext ctx
       !tyVal = eval ctx' ty'
   (!bodyTy, !body') <-
-    -- Generally, the first mapping on returned type
-    -- is not needed due to eigenvariable condition.
     Bi.bimap thawLocalVal thawLocal
       <$> typeInfer (addLocal tyVal ctx) (freezeBound 0 body)
   let lamRetTy v = substBound 0 v bodyTy
@@ -625,7 +623,12 @@ toEvalName (Bound _ v) = Bound NoExtField v
 toEvalName (PrimName _ v) = PrimName NoExtField v
 toEvalName (XName (Local v)) = XName (EvLocal v)
 
-freezeBound :: forall m n. (KnownTypingMode m) => Int -> Expr (Typing m n) -> Expr (Typing m ('S n))
+freezeBound ::
+  forall m n.
+  (KnownTypingMode m) =>
+  Int ->
+  Expr (Typing m n) ->
+  Expr (Typing m ('S n))
 freezeBound !i (Ann c e ty) =
   Ann
     (case typingModeVal @m of SInfer -> c; SCheck -> c)

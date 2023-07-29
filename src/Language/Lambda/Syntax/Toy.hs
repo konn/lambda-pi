@@ -86,6 +86,7 @@ freezeBound = go 0
     go !i (AppDB l r) = go i l `AppDB` go i r
     go !i (Var j)
       | j == i = Local Here
+      | j > i = Var $ j - 1
       | otherwise = Var j
     go !_ (Local l) = Local (There l)
     go !i (LamDB f) = LamDB $ go (i + 1) f
@@ -96,7 +97,9 @@ thawLocal = go 0
     go :: Int -> DeBruijn' (L ('S n)) -> DeBruijn' (L n)
     go !i (Local Here) = Var i
     go !_ (Local (There l)) = Local l
-    go !_ (Var j) = Var j
+    go !i (Var j)
+      | j >= i = Var $ j + 1
+      | otherwise = Var j
     go !i (AppDB l r) = go i l `AppDB` go i r
     go !i (LamDB e) = LamDB $ go (i + 1) e
 
