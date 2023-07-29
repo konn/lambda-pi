@@ -737,9 +737,9 @@ freezeBoundName ::
 freezeBoundName i = \case
   Global e n -> Global e n
   PrimName e n -> PrimName e n
-  XName (Local l) -> XName $ Local $ injOrd l
+  XName (Local l) -> XName $ Local $ There l
   Bound e j
-    | j == i -> XName $ Local $ sLvlToOrd $ sLvl @n
+    | j == i -> XName $ Local Here
     | otherwise -> Bound e j
 
 toOrderedList :: HashMap Text a -> [(Text, a)]

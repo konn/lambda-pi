@@ -228,6 +228,7 @@ vfree :: Type' n -> Name (Eval' n) -> Value' n
 vfree = fmap VNeutral . NFree
 
 type Env = Env' Z
+
 data Env' n = Env
   { namedBinds :: !(HM.HashMap Text (Value' n))
   , boundValues :: ![Value' n]
@@ -666,18 +667,10 @@ mapLocalM f = \case
 forLocal :: Name (Eval' n) -> (Ordinal n -> Name (Eval' m)) -> Name (Eval' m)
 forLocal = flip mapLocal
 
-forLocalM ::
-  (Applicative f) =>
-  Name (Eval' n) ->
-  (Ordinal n -> f (Name (Eval' m))) ->
-  f (Name (Eval' m))
-forLocalM = flip mapLocalM
-
 thawName :: Name (Eval' (S n)) -> Thawer n (Name (Eval' n))
 thawName =
   mapLocalM $ \k -> do
-    sing <- view #singLocals
-    case projOrd sing k of
+    case predOrd k of
       Nothing -> views #curLvl $ Bound NoExtField
       Just l -> pure $ XName $ EvLocal l
 
@@ -707,7 +700,7 @@ injNeutral :: Neutral' n -> Thawer n (Neutral' (S n))
 injNeutral (NFree ty name) =
   NFree
     <$> injValueM ty
-    <*> pure (forLocal name (XName . EvLocal . injOrd))
+    <*> pure (forLocal name (XName . EvLocal . There))
 injNeutral (NApp ty l r) =
   NApp <$> injValueM ty <*> injNeutral l <*> injValueM r
 injNeutral (NProjField ty e a) =
@@ -776,15 +769,7 @@ projValueM (VNeutral n) = VNeutral <$> projNeutral n
 
 projNeutral :: Neutral' (S n) -> Thawer n (Neutral' n)
 projNeutral (NFree ty name) =
-  NFree
-    <$> projValueM ty
-    <*> forLocalM
-      name
-      ( \i -> asks $ \ThawEnv {..} ->
-          case projOrd singLocals i of
-            Just l -> XName $ EvLocal l
-            Nothing -> Bound NoExtField curLvl
-      )
+  NFree <$> projValueM ty <*> thawName name
 projNeutral (NApp ty l r) =
   NApp <$> projValueM ty <*> projNeutral l <*> projValueM r
 projNeutral (NProjField ty e a) =
