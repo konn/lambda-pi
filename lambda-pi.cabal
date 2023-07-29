@@ -28,11 +28,12 @@ library
       Control.Lens.Plated.Extra
       Control.Monad.Combinators.Expr.HigherKinded
       Data.Bifunctor.Utils
+      Data.Level
+      Data.Level.Sequence
       Data.List.NonEmpty.Utils
       GHC.Generics.Constraint
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Eval
-      Language.Lambda.Syntax.LambdaPi.Locals
       Language.Lambda.Syntax.LambdaPi.Parser
       Language.Lambda.Syntax.LambdaPi.QuasiQuotes
       Language.Lambda.Syntax.LambdaPi.Rename

@@ -59,6 +59,7 @@ import Data.Function (fix, on)
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
+import Data.Level
 import Data.List
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe
@@ -69,7 +70,6 @@ import Data.Text qualified as T
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Locals
 import RIO (NFData (..), deepseq, tshow)
 import Text.PrettyPrint.Monadic (Pretty (..))
 
@@ -139,7 +139,7 @@ vZero = VNeutral $ NFree VNat $ PrimName NoExtField Zero
 instance Show (Value' n) where
   show = show . pprint . quote 0
 
-instance Pretty e (Expr (Eval' n)) => Pretty e (Value' n) where
+instance (Pretty e (Expr (Eval' n))) => Pretty e (Value' n) where
   pretty = pretty . quote 0
 
 data SplitTypeInfo n = SplitTypeInfo
@@ -162,6 +162,7 @@ instance Show (SplitTypeInfo n) where
           . showString " }"
 
 instance Eq (SplitTypeInfo n) where
+  (==) :: SplitTypeInfo n -> SplitTypeInfo n -> Bool
   (==) = (==) `on` splitTypeRank
 
 instance Ord (SplitTypeInfo n) where
@@ -200,7 +201,7 @@ instance NFData (Neutral' n) where
 nPrim :: Type' n -> Prim -> Neutral' n
 nPrim ty p = NFree ty $ PrimName NoExtField p
 
-inferPrim :: HasCallStack => Prim -> Type' n
+inferPrim :: (HasCallStack) => Prim -> Type' n
 inferPrim Tt = VNeutral $ nPrim VStar Unit
 inferPrim Unit = VStar
 inferPrim Nat = VStar
@@ -313,7 +314,7 @@ boundFree :: Type' n -> Int -> Name (Eval' n) -> Expr (Eval' n)
 boundFree ty i (XName (Quote k)) = Var ty $ Bound NoExtField $ i - k - 1
 boundFree ty _ x = Var ty x
 
-eval :: HasCallStack => Env n -> Expr (Eval' n) -> Value' n
+eval :: (HasCallStack) => Env n -> Expr (Eval' n) -> Value' n
 eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var ty fv) =
@@ -425,7 +426,7 @@ infixr 0 ~>
 (~>) :: Type' n -> Type' n -> Type' n
 (~>) l = VPi Anonymous l . const
 
-natElimType :: HasCallStack => Type' n
+natElimType :: (HasCallStack) => Type' n
 natElimType =
   VPi (AlphaName "t") (VPi Anonymous VNat $ const VStar) $ \t ->
     VPi (AlphaName "base") (t @@ vZero) $ \_base ->
@@ -464,7 +465,7 @@ pattern l :@ r <- NApp _ l r
 pattern P :: Prim -> Neutral' n
 pattern P p <- NFree _ (PrimName _ p)
 
-(@@) :: HasCallStack => Value' n -> Value' n -> Value' n
+(@@) :: (HasCallStack) => Value' n -> Value' n -> Value' n
 VLam _ _ f @@ r = f r
 VNeutral nlhs@(P NatElim :@ t :@ _ :@ _) @@ VNeutral n =
   VNeutral $ NApp (t @@ VNeutral n) nlhs (VNeutral n)
@@ -477,17 +478,17 @@ l @@ r = error $ "Could not apply: " <> show ((pprint l, typeOf l), (pprint r, t
 vapps :: NonEmpty (Type' n) -> Type' n
 vapps = foldl1 (@@)
 
-newtype ThawEnv n = ThawEnv {curLvl :: Int}
-  deriving (Show, Eq, Ord, Generic)
+data ThawEnv n = ThawEnv {curLvl :: !Int, singLocals :: !(SLvl n)}
+  deriving (Show, Eq, Generic)
 
 type Thawer n = Reader (ThawEnv n)
 
-thawLocalVal :: Value' (S n) -> Value' n
+thawLocalVal :: (KnownLevel n) => Value' (S n) -> Value' n
 thawLocalVal =
-  flip runReader ThawEnv {curLvl = 0, ..} . thawLocalValM
+  flip runReader ThawEnv {curLvl = 0, singLocals = sLvl, ..} . thawLocalValM
 
-thawLocal :: forall n. Expr (Eval' (S n)) -> Expr (Eval' n)
-thawLocal = flip runReader ThawEnv {curLvl = 0, ..} . go
+thawLocal :: forall n. (KnownLevel n) => Expr (Eval' (S n)) -> Expr (Eval' n)
+thawLocal = flip runReader ThawEnv {curLvl = 0, singLocals = sLvl, ..} . go
   where
     go :: Expr (Eval' (S n)) -> Thawer n (Expr (Eval' n))
     go (Var ty name) = do
@@ -637,7 +638,7 @@ thawLocalNeutral = go
               alts
           )
 
-mapLocal :: (LIdx n -> Name (Eval' m)) -> Name (Eval' n) -> Name (Eval' m)
+mapLocal :: (Ordinal n -> Name (Eval' m)) -> Name (Eval' n) -> Name (Eval' m)
 mapLocal f = \case
   XName (EvLocal l) -> f l
   XName (Quote a) -> XName $ Quote a
@@ -645,7 +646,7 @@ mapLocal f = \case
   Bound x a -> Bound x a
   PrimName x a -> PrimName x a
 
-mapLocalM :: Applicative f => (LIdx n -> f (Name (Eval' m))) -> Name (Eval' n) -> f (Name (Eval' m))
+mapLocalM :: (Applicative f) => (Ordinal n -> f (Name (Eval' m))) -> Name (Eval' n) -> f (Name (Eval' m))
 mapLocalM f = \case
   XName (EvLocal l) -> f l
   XName (Quote a) -> pure $ XName $ Quote a
@@ -653,20 +654,23 @@ mapLocalM f = \case
   Bound x a -> pure $ Bound x a
   PrimName x a -> pure $ PrimName x a
 
-forLocal :: Name (Eval' n) -> (LIdx n -> Name (Eval' m)) -> Name (Eval' m)
+forLocal :: Name (Eval' n) -> (Ordinal n -> Name (Eval' m)) -> Name (Eval' m)
 forLocal = flip mapLocal
 
 forLocalM ::
-  Applicative f =>
+  (Applicative f) =>
   Name (Eval' n) ->
-  (LIdx n -> f (Name (Eval' m))) ->
+  (Ordinal n -> f (Name (Eval' m))) ->
   f (Name (Eval' m))
 forLocalM = flip mapLocalM
 
 thawName :: Name (Eval' (S n)) -> Thawer n (Name (Eval' n))
-thawName = mapLocalM $ \case
-  Here -> views #curLvl $ Bound NoExtField
-  There l -> pure $ XName $ EvLocal l
+thawName =
+  mapLocalM $ \k -> do
+    sing <- view #singLocals
+    case projOrd sing k of
+      Nothing -> views #curLvl $ Bound NoExtField
+      Just l -> pure $ XName $ EvLocal l
 
 injValueWith :: ThawEnv n -> Value' n -> Value' (S n)
 injValueWith e = withEnv e . injValueM
@@ -694,7 +698,7 @@ injNeutral :: Neutral' n -> Thawer n (Neutral' (S n))
 injNeutral (NFree ty name) =
   NFree
     <$> injValueM ty
-    <*> pure (forLocal name (XName . EvLocal . There))
+    <*> pure (forLocal name (XName . EvLocal . injOrd))
 injNeutral (NApp ty l r) =
   NApp <$> injValueM ty <*> injNeutral l <*> injValueM r
 injNeutral (NProjField ty e a) =
@@ -762,10 +766,13 @@ projNeutral :: Neutral' (S n) -> Thawer n (Neutral' n)
 projNeutral (NFree ty name) =
   NFree
     <$> projValueM ty
-    <*> forLocalM name \case
-      There l -> pure $ XName $ EvLocal l
-      Here -> asks $ \ThawEnv {..} ->
-        Bound NoExtField curLvl
+    <*> forLocalM
+      name
+      ( \i -> asks $ \ThawEnv {..} ->
+          case projOrd singLocals i of
+            Just l -> XName $ EvLocal l
+            Nothing -> Bound NoExtField curLvl
+      )
 projNeutral (NApp ty l r) =
   NApp <$> projValueM ty <*> projNeutral l <*> projValueM r
 projNeutral (NProjField ty e a) =
@@ -809,7 +816,7 @@ projBinder2 :: (Value' (S n) -> Value' (S n) -> Value' (S n)) -> Thawer n (Value
 projBinder2 f = asks $ \e l r ->
   withEnv e $ projValueM $ f (injValueWith e l) (injValueWith e r)
 
-substBound :: HasCallStack => Int -> Value' n -> Type' n -> Value' n
+substBound :: (HasCallStack) => Int -> Value' n -> Type' n -> Value' n
 substBound i v (VLam lamTy mv f) =
   VLam (substBoundBinderSpec i v lamTy) mv $ substBound i v . f
 substBound _ _ VStar = VStar
@@ -833,7 +840,7 @@ substBoundBinderSpec i v l =
     , bodyType = substBound i v . bodyType l
     }
 
-substBoundNeutral :: HasCallStack => Int -> Value' n -> Neutral' n -> Either (Neutral' n) (Value' n)
+substBoundNeutral :: (HasCallStack) => Int -> Value' n -> Neutral' n -> Either (Neutral' n) (Value' n)
 substBoundNeutral i v (NFree _ (Bound _ j)) | i == j = Right v
 substBoundNeutral i v (NFree ty name) =
   Left $ NFree (substBound i v ty) name
@@ -880,7 +887,7 @@ data Eval' (n :: Lvl) deriving (Show, Eq, Ord, Generic, Data)
 
 data EvalVars n
   = Quote !Int
-  | EvLocal !(LIdx n)
+  | EvLocal !(Ordinal n)
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (NFData)
 
