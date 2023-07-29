@@ -94,7 +94,7 @@ thawLocal :: DeBruijn' (L ('S n)) -> DeBruijn' (L n)
 thawLocal = go 0
   where
     go :: Int -> DeBruijn' (L ('S n)) -> DeBruijn' (L n)
-    go !_ (Local Here) = Var 0
+    go !i (Local Here) = Var i
     go !_ (Local (There l)) = Local l
     go !_ (Var j) = Var j
     go !i (AppDB l r) = go i l `AppDB` go i r
