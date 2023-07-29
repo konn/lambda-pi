@@ -37,6 +37,7 @@ library
       Language.Lambda.Syntax.LambdaPi.Rename
       Language.Lambda.Syntax.LambdaPi.REPL
       Language.Lambda.Syntax.LambdaPi.Typing
+      Language.Lambda.Syntax.Toy
       Text.PrettyPrint.Monadic
   other-modules:
       Paths_lambda_pi
@@ -149,6 +150,7 @@ test-suite lambda-pi-test
       Language.Lambda.Syntax.LambdaPi.ParserSpec
       Language.Lambda.Syntax.LambdaPi.RenameSpec
       Language.Lambda.Syntax.LambdaPi.TypingSpec
+      Language.Lambda.Syntax.ToySpec
       Paths_lambda_pi
   hs-source-dirs:
       test
@@ -169,6 +171,7 @@ test-suite lambda-pi-test
     , dlist
     , either
     , equational-reasoning
+    , falsify
     , filtrable
     , fmlist
     , generic-deriving
@@ -187,6 +190,7 @@ test-suite lambda-pi-test
     , pretty
     , rio
     , rio-orphans
+    , selective
     , semialign
     , semigroupoids
     , semigroups

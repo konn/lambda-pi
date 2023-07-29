@@ -549,7 +549,13 @@ unsubstBinderTy i BinderTypeSpec {..} = do
   lvl <- ask
   BinderTypeSpec
     <$> unsubstBVarValM i argType
-    <*> pure (flip runReader (lvl + 1) . unsubstBVarValM i . bodyType)
+    <*> pure
+      ( flip runReader (lvl + 1)
+          . unsubstBVarValM i
+          . bodyType
+          . flip runReader lvl
+          . unsubstBVarValM i
+      )
 
 unsubstBVarValToM :: Int -> Int -> Value -> Value
 unsubstBVarValToM lvl i v = runReader (unsubstBVarValM i v) lvl

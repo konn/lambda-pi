@@ -629,8 +629,9 @@ toEvalName (XName (Local v)) = XName (EvLocal v)
 substBVar :: forall m. KnownTypingMode m => Int -> Name Inferable -> Expr (Typing m) -> Expr (Typing m)
 substBVar !i r (Ann c e ty) = Ann c (substBVar i r e) (substBVar i r ty)
 substBVar !_ _ (Star c) = Star c
-substBVar !i r bd@(Var _ (Bound _ j))
-  | i == j = fromInferable $ Var NoExtField r
+substBVar !i r bd@(Var _ (Bound e j))
+  | j == i = fromInferable $ Var NoExtField r
+  | j > i = fromInferable $ Var NoExtField (Bound e (j - 1))
   | otherwise = bd
 substBVar !_ _ f@Var {} = f
 substBVar !i r (App e f g) = App e (substBVar i r f) (substBVar i r g)
