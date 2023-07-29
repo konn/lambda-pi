@@ -49,6 +49,7 @@ dependencies:
 - parser-combinators
 - parsers
 - pretty
+- profunctors
 - rio
 - rio-orphans
 - semialign

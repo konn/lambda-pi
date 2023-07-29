@@ -22,14 +22,15 @@
 module Language.Lambda.Syntax.LambdaPi.Eval (
   -- * Type checking and inference
   Env (..),
-  Value (..),
+  Value' (..),
   (@@),
   Type,
-  Neutral (..),
+  Type',
+  Neutral' (..),
+  Neutral,
   eval,
-  unsubstBVar,
-  unsubstBVarTo,
-  unsubstBVarVal,
+  thawLocal,
+  thawLocalVal,
   BinderTypeSpec (..),
   EvalVars (..),
   vapps,
@@ -42,6 +43,7 @@ module Language.Lambda.Syntax.LambdaPi.Eval (
   -- * ASTs
   quote,
   Eval,
+  Eval',
   CaseTypeInfo (..),
   SplitTypeInfo (..),
   substBound,
@@ -67,32 +69,35 @@ import Data.Text qualified as T
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Language.Lambda.Syntax.LambdaPi
+import Language.Lambda.Syntax.LambdaPi.Locals
 import RIO (NFData (..), deepseq, tshow)
 import Text.PrettyPrint.Monadic (Pretty (..))
 
-data Value
-  = VLam BinderTypeSpec AlphaName (Value -> Value)
+type Value = Value' Z
+
+data Value' n
+  = VLam (BinderTypeSpec n) AlphaName (Value' n -> Value' n)
   | VStar
-  | VPi AlphaName Value (Value -> Value)
-  | VSigma AlphaName Value (Value -> Value)
-  | VPair BinderTypeSpec AlphaName Value Value
-  | VRecord (HashMap Text Value)
-  | VMkRecord (HashMap Text Type) (HashMap Text Value)
-  | VVariant (HashMap Text Value)
-  | VInj (HashMap Text Type) Text Value
-  | VNeutral Neutral
+  | VPi AlphaName (Value' n) (Value' n -> Value' n)
+  | VSigma AlphaName (Value' n) (Value' n -> Value' n)
+  | VPair (BinderTypeSpec n) AlphaName (Value' n) (Value' n)
+  | VRecord (HashMap Text (Value' n))
+  | VMkRecord (HashMap Text (Type' n)) (HashMap Text (Value' n))
+  | VVariant (HashMap Text (Value' n))
+  | VInj (HashMap Text (Type' n)) Text (Value' n)
+  | VNeutral (Neutral' n)
   deriving (Generic)
 
-instance NFData BinderTypeSpec where
+instance NFData (BinderTypeSpec n) where
   rnf BinderTypeSpec {..} = rnf argType `seq` rnfTyFun argType bodyType
 
-rnfTyFun :: Type -> (Type -> Type) -> ()
-rnfTyFun argTy f = f `deepseq` f (vfree argTy (XName $ EvLocal 0)) `deepseq` ()
+rnfTyFun :: Type' n -> (Type' n -> Type' n) -> ()
+rnfTyFun argTy f = f `deepseq` f (vfree argTy (Bound NoExtField (-1))) `deepseq` ()
 
-rnfTyFun2 :: Type -> Type -> (Type -> Type -> Type) -> ()
-rnfTyFun2 fstTy sndTy f = f `deepseq` f (vfree fstTy (XName $ EvLocal 0)) (vfree sndTy (XName $ EvLocal 1)) `deepseq` ()
+rnfTyFun2 :: Type' n -> Type' n -> (Type' n -> Type' n -> Type' n) -> ()
+rnfTyFun2 fstTy sndTy f = f `deepseq` f (vfree fstTy (Bound NoExtField (-1))) (vfree sndTy (Bound NoExtField (-2))) `deepseq` ()
 
-instance NFData Value where
+instance NFData (Value' n) where
   rnf (VLam lts a b) = lts `deepseq` a `deepseq` rnfTyFun (argType lts) b
   rnf (VPi an a b) = an `deepseq` a `deepseq` rnfTyFun a b
   rnf (VSigma an a b) = an `deepseq` a `deepseq` rnfTyFun a b
@@ -104,7 +109,7 @@ instance NFData Value where
   rnf (VInj alts l tag) = alts `deepseq` l `deepseq` rnf tag
   rnf (VNeutral n) = rnf n
 
-typeOf :: Value -> Type
+typeOf :: Value' n -> Type' n
 typeOf (VLam BinderTypeSpec {..} x _) = VPi x argType bodyType
 typeOf VStar = VStar
 typeOf VPi {} = VStar
@@ -116,36 +121,36 @@ typeOf VVariant {} = VStar
 typeOf (VInj tags _ _) = VVariant tags
 typeOf (VNeutral n) = typeOfNeutral n
 
-nSucc :: Neutral
+nSucc :: Neutral' n
 nSucc = NFree (VPi Anonymous VNat (const VNat)) (PrimName NoExtField Succ)
 
-pattern VNat :: Value
+pattern VNat :: Value' n
 pattern VNat = VNeutral (NFree VStar (PrimName NoExtField Nat))
 
-vSucc :: Value
+vSucc :: Value' n
 vSucc = VNeutral nSucc
 
-nZero :: Neutral
+nZero :: Neutral' n
 nZero = NFree VNat $ PrimName NoExtField Zero
 
-vZero :: Value
+vZero :: Value' n
 vZero = VNeutral $ NFree VNat $ PrimName NoExtField Zero
 
-instance Show Value where
+instance Show (Value' n) where
   show = show . pprint . quote 0
 
-instance Pretty e (Expr Eval) => Pretty e Value where
+instance Pretty e (Expr (Eval' n)) => Pretty e (Value' n) where
   pretty = pretty . quote 0
 
-data SplitTypeInfo = SplitTypeInfo
-  { splitFstType :: Type
-  , splitSndType :: Type -> Type
-  , splitRetType :: Type
+data SplitTypeInfo n = SplitTypeInfo
+  { splitFstType :: Type' n
+  , splitSndType :: Type' n -> Type' n
+  , splitRetType :: Type' n
   }
   deriving (Generic)
   deriving anyclass (NFData)
 
-instance Show SplitTypeInfo where
+instance Show (SplitTypeInfo n) where
   showsPrec _ spc =
     let (arg, bdy) = splitTypeRank spc
      in showString "BinderTypeSpec { "
@@ -156,26 +161,28 @@ instance Show SplitTypeInfo where
           . shows bdy
           . showString " }"
 
-instance Eq SplitTypeInfo where
+instance Eq (SplitTypeInfo n) where
   (==) = (==) `on` splitTypeRank
 
-instance Ord SplitTypeInfo where
+instance Ord (SplitTypeInfo n) where
   compare = comparing splitTypeRank
 
-splitTypeRank :: SplitTypeInfo -> (Type, Type)
+splitTypeRank :: SplitTypeInfo n -> (Type' n, Type' n)
 splitTypeRank SplitTypeInfo {..} =
   (VSigma Anonymous splitFstType splitSndType, splitRetType)
 
-data Neutral
-  = NFree Type (Name Eval)
-  | NApp Type Neutral Value
-  | NProjField Type Neutral Text
-  | NSplit SplitTypeInfo Neutral AlphaName AlphaName (Value -> Value -> Value)
-  | NCase CaseTypeInfo Neutral (HM.HashMap Text (Value -> Value))
+type Neutral = Neutral' Z
+
+data Neutral' n
+  = NFree (Type' n) (Name (Eval' n))
+  | NApp (Type' n) (Neutral' n) (Value' n)
+  | NProjField (Type' n) (Neutral' n) Text
+  | NSplit (SplitTypeInfo n) (Neutral' n) AlphaName AlphaName (Value' n -> Value' n -> Value' n)
+  | NCase (CaseTypeInfo n) (Neutral' n) (HM.HashMap Text (Value' n -> Value' n))
   -- FIXME: Work out what NOpen should be
   deriving (Generic)
 
-instance NFData Neutral where
+instance NFData (Neutral' n) where
   rnf (NFree ty n) = ty `deepseq` rnf n
   rnf (NApp ty l r) = ty `deepseq` l `deepseq` rnf r
   rnf (NProjField ty p l) = ty `deepseq` p `deepseq` rnf l
@@ -190,10 +197,10 @@ instance NFData Neutral where
               (splitSndType cty (vfree (splitFstType cty) $ XName $ Quote 0))
               b
 
-nPrim :: Type -> Prim -> Neutral
+nPrim :: Type' n -> Prim -> Neutral' n
 nPrim ty p = NFree ty $ PrimName NoExtField p
 
-inferPrim :: HasCallStack => Prim -> Type
+inferPrim :: HasCallStack => Prim -> Type' n
 inferPrim Tt = VNeutral $ nPrim VStar Unit
 inferPrim Unit = VStar
 inferPrim Nat = VStar
@@ -201,32 +208,34 @@ inferPrim Zero = VNat
 inferPrim Succ = VPi Anonymous VNat (const VNat)
 inferPrim NatElim = natElimType
 
-typeOfNeutral :: Neutral -> Type
+typeOfNeutral :: Neutral' n -> Type' n
 typeOfNeutral (NFree retTy _) = retTy
 typeOfNeutral (NApp retTy _ _) = retTy
 typeOfNeutral (NProjField retTy _ _) = retTy
 typeOfNeutral (NCase CaseTypeInfo {..} _ _) = caseRetTy
 typeOfNeutral (NSplit ty _ _ _ _) = splitRetType ty
 
-vfree :: Type -> Name Eval -> Value
+vfree :: Type' n -> Name (Eval' n) -> Value' n
 vfree = fmap VNeutral . NFree
 
-data Env = Env
-  { namedBinds :: !(HM.HashMap Text Value)
-  , boundValues :: ![Value]
+data Env n = Env
+  { namedBinds :: !(HM.HashMap Text (Value' n))
+  , boundValues :: ![Value' n]
   }
   deriving (Show, Generic)
-  deriving (Semigroup, Monoid) via GenericSemigroupMonoid Env
+  deriving (Semigroup, Monoid) via GenericSemigroupMonoid (Env n)
 
-instance Eq Value where
+instance Eq (Value' n) where
   (==) = (==) `on` quote 0
 
-instance Ord Value where
+instance Ord (Value' n) where
   compare = comparing $ quote 0
+
+type Type' = Value'
 
 type Type = Value
 
-quote :: Int -> Value -> Expr Eval
+quote :: Int -> Value' n -> Expr (Eval' n)
 quote i (VLam ls@BinderTypeSpec {..} mv f) =
   Lam ls mv (quote i argType) $
     quote (i + 1) $
@@ -270,7 +279,7 @@ quote i (VVariant flds) =
 quote i (VInj alts l e) =
   Inj alts l $ quote i e
 
-quoteNeutral :: Int -> Neutral -> Expr Eval
+quoteNeutral :: Int -> Neutral' n -> Expr (Eval' n)
 quoteNeutral i (NFree ty x) = boundFree ty i x
 quoteNeutral i (NApp ty n v) = App ty (quoteNeutral i n) (quote i v)
 quoteNeutral i (NProjField ty r f) =
@@ -300,11 +309,11 @@ quoteNeutral i (NCase ty@CaseTypeInfo {..} v alts) =
           caseAltArgs
           alts
 
-boundFree :: Type -> Int -> Name Eval -> Expr Eval
+boundFree :: Type' n -> Int -> Name (Eval' n) -> Expr (Eval' n)
 boundFree ty i (XName (Quote k)) = Var ty $ Bound NoExtField $ i - k - 1
 boundFree ty _ x = Var ty x
 
-eval :: HasCallStack => Env -> Expr Eval -> Value
+eval :: HasCallStack => Env n -> Expr (Eval' n) -> Value' n
 eval ctx (Ann _ e _) = eval ctx e
 eval _ Star {} = VStar
 eval ctx (Var ty fv) =
@@ -355,14 +364,14 @@ eval ctx (Case cinfo e (CaseAlts alts)) =
       eval (ctx & #boundValues %~ (v <|)) b
 eval _ (XExpr c) = noExtCon c
 
-evalSplit :: SplitTypeInfo -> Value -> AlphaName -> AlphaName -> (Value -> Value -> Value) -> Value
+evalSplit :: SplitTypeInfo n -> Value' n -> AlphaName -> AlphaName -> (Value' n -> Value' n -> Value' n) -> Value' n
 evalSplit sinfo v0 lName rName body =
   case v0 of
     VNeutral n -> VNeutral $ NSplit sinfo n lName rName body
     VPair _ _ l r -> body l r
     v -> error $ "Impossible: split-expression expects dependent-pair (sigma-type) as a scrutinee, but got: " <> show (pprint v)
 
-evalCase :: CaseTypeInfo -> Value -> HashMap Text (Value -> Value) -> Value
+evalCase :: CaseTypeInfo n -> Value' n -> HashMap Text (Value' n -> Value' n) -> Value' n
 evalCase cinfo v0 alts = case v0 of
   VInj _ t v ->
     case HM.lookup t alts of
@@ -376,7 +385,7 @@ evalCase cinfo v0 alts = case v0 of
   VNeutral v -> VNeutral $ NCase cinfo v alts
   v -> error $ "Impossible: neither inj or neutral term given as a scrutinee of case-expression: " <> show (pprint v)
 
-evalNatElim :: Value -> Value -> Value -> Value -> Value
+evalNatElim :: Value' n -> Value' n -> Value' n -> Value' n -> Value' n
 evalNatElim t t0 tStep = fix $ \recur kVal ->
   case kVal of
     VNeutral (NFree _ (PrimName _ Zero)) -> t0
@@ -413,10 +422,10 @@ evalNatElim t t0 tStep = fix $ \recur kVal ->
 
 infixr 0 ~>
 
-(~>) :: Type -> Type -> Type
+(~>) :: Type' n -> Type' n -> Type' n
 (~>) l = VPi Anonymous l . const
 
-natElimType :: HasCallStack => Type
+natElimType :: HasCallStack => Type' n
 natElimType =
   VPi (AlphaName "t") (VPi Anonymous VNat $ const VStar) $ \t ->
     VPi (AlphaName "base") (t @@ vZero) $ \_base ->
@@ -429,7 +438,7 @@ natElimType =
         $ \_step ->
           VPi (AlphaName "k") VNat $ \k -> t @@ k
 
-evalProjField :: Type -> Text -> Value -> Value
+evalProjField :: Type' n -> Text -> Value' n -> Value' n
 evalProjField retTy f =
   \case
     VMkRecord _ flds ->
@@ -449,13 +458,13 @@ evalProjField retTy f =
 
 infixl 9 @@, :@
 
-pattern (:@) :: Neutral -> Value -> Neutral
+pattern (:@) :: Neutral' n -> Value' n -> Neutral' n
 pattern l :@ r <- NApp _ l r
 
-pattern P :: Prim -> Neutral
+pattern P :: Prim -> Neutral' n
 pattern P p <- NFree _ (PrimName _ p)
 
-(@@) :: HasCallStack => Value -> Value -> Value
+(@@) :: HasCallStack => Value' n -> Value' n -> Value' n
 VLam _ _ f @@ r = f r
 VNeutral nlhs@(P NatElim :@ t :@ _ :@ _) @@ VNeutral n =
   VNeutral $ NApp (t @@ VNeutral n) nlhs (VNeutral n)
@@ -465,124 +474,120 @@ VNeutral neu @@ r
       VNeutral $ NApp (f r) neu r
 l @@ r = error $ "Could not apply: " <> show ((pprint l, typeOf l), (pprint r, typeOf r))
 
-vapps :: NonEmpty Type -> Type
+vapps :: NonEmpty (Type' n) -> Type' n
 vapps = foldl1 (@@)
 
-unsubstBVarVal :: Int -> Value -> Value
-unsubstBVarVal = fmap (`runReader` 0) . unsubstBVarValM
+newtype ThawEnv n = ThawEnv {curLvl :: Int}
+  deriving (Show, Eq, Ord, Generic)
 
-unsubstBVar :: Int -> Expr Eval -> Expr Eval
-unsubstBVar = unsubstBVarTo 0
+type Thawer n = Reader (ThawEnv n)
 
-unsubstBVarTo :: Int -> Int -> Expr Eval -> Expr Eval
-unsubstBVarTo j0 i = flip runReader j0 . go
+thawLocalVal :: Value' (S n) -> Value' n
+thawLocalVal =
+  flip runReader ThawEnv {curLvl = 0, ..} . thawLocalValM
+
+thawLocal :: forall n. Expr (Eval' (S n)) -> Expr (Eval' n)
+thawLocal = flip runReader ThawEnv {curLvl = 0, ..} . go
   where
+    go :: Expr (Eval' (S n)) -> Thawer n (Expr (Eval' n))
     go (Var ty name) = do
       -- NOTE: This isn't needed if occurs check passed
-      Var <$> unsubstBVarValM i ty <*> case name of
-        XName (EvLocal j)
-          | j == i -> asks $ Bound NoExtField
-        _ -> pure name
+      Var <$> thawLocalValM ty <*> thawName name
     go (Pi NoExtField mn l r) =
-      Pi NoExtField mn <$> go l <*> local (+ 1) (go r)
+      Pi NoExtField mn <$> go l <*> local (#curLvl +~ 1) (go r)
     go (Lam lamTy mn l r) =
       Lam
-        <$> unsubstBinderTy i lamTy
+        <$> thawLocalBinderTy lamTy
         <*> pure mn
         <*> go l
-        <*> local (+ 1) (go r)
+        <*> local (#curLvl +~ 1) (go r)
     go (Sigma NoExtField mn l r) =
-      Sigma NoExtField mn <$> go l <*> local (+ 1) (go r)
+      Sigma NoExtField mn <$> go l <*> local (#curLvl +~ 1) (go r)
     go (Pair ty l r) =
-      Pair <$> unsubstBinderTy i ty <*> go l <*> go r
+      Pair <$> thawLocalBinderTy ty <*> go l <*> go r
     go (Split ty scrut2 lName rName b) =
       Split
-        <$> unsubstBVarSplitInfo i ty
+        <$> thawLocalSplitInfo ty
         <*> go scrut2
         <*> pure lName
         <*> pure rName
-        <*> local (+ 2) (go b)
-    go (Ann e l r) = Ann <$> unsubstBVarValM i e <*> go l <*> go r
-    go (App e l r) = App <$> unsubstBVarValM i e <*> go l <*> go r
+        <*> local (#curLvl +~ 2) (go b)
+    go (Ann e l r) = Ann <$> thawLocalValM e <*> go l <*> go r
+    go (App e l r) = App <$> thawLocalValM e <*> go l <*> go r
     go (Let c mn e v) =
-      Let <$> unsubstBVarValM i c <*> pure mn <*> go e <*> local (+ 1) (go v)
-    go s@Star {} = pure s
+      Let <$> thawLocalValM c <*> pure mn <*> go e <*> local (#curLvl +~ 1) (go v)
+    go (Star x) = pure $ Star x
     go (Record NoExtField (RecordFieldTypes flds)) =
       Record NoExtField . RecordFieldTypes <$> mapM (mapM go) flds
     go (MkRecord tys (MkRecordFields flds)) =
       MkRecord
-        <$> mapM (unsubstBVarValM i) tys
+        <$> mapM thawLocalValM tys
         <*> (MkRecordFields <$> mapM (mapM go) flds)
     go (ProjField ty e l) =
-      ProjField <$> unsubstBVarValM i ty <*> go e <*> pure l
+      ProjField <$> thawLocalValM ty <*> go e <*> pure l
     go (Open ty r b) =
-      Open <$> unsubstBVarValM i ty <*> go r <*> go b
+      Open <$> thawLocalValM ty <*> go r <*> go b
     go (Variant NoExtField (VariantTags flds)) =
       Variant NoExtField . VariantTags <$> mapM (mapM go) flds
     go (Inj tags l p) =
-      Inj <$> mapM (unsubstBVarValM i) tags <*> pure l <*> go p
+      Inj <$> mapM thawLocalValM tags <*> pure l <*> go p
     go (Case caseTy e (CaseAlts alts)) =
       Case
-        <$> unsubstBVarCaseInfo i caseTy
+        <$> thawLocalCaseInfo caseTy
         <*> go e
-        <*> (CaseAlts <$> local (+ 1) (mapM (mapM goAlt) alts))
+        <*> (CaseAlts <$> local (#curLvl +~ 1) (mapM (mapM goAlt) alts))
     go (XExpr c) = noExtCon c
     goAlt (CaseAlt NoExtField name a) =
       CaseAlt NoExtField name <$> go a
 
-unsubstBVarSplitInfo :: Int -> SplitTypeInfo -> Reader Int SplitTypeInfo
-unsubstBVarSplitInfo i si = do
-  lvl <- ask
-  _fst <- unsubstBVarValM i $ splitFstType si
-  let _snd = flip runReader (lvl + 1) . unsubstBVarValM i . splitSndType si
-  _ret <- unsubstBVarValM i $ splitRetType si
+thawLocalSplitInfo :: SplitTypeInfo ('S n) -> Thawer n (SplitTypeInfo n)
+thawLocalSplitInfo si = do
+  e <- ask
+  _fst <- thawLocalValM $ splitFstType si
+  let _snd = thawLocalWith (e & #curLvl +~ 1) . splitSndType si . injValueWith e
+  _ret <- thawLocalValM $ splitRetType si
   pure SplitTypeInfo {splitFstType = _fst, splitSndType = _snd, splitRetType = _ret}
 
-unsubstBVarCaseInfo :: Int -> CaseTypeInfo -> Reader Int CaseTypeInfo
-unsubstBVarCaseInfo i CaseTypeInfo {..} =
+thawLocalCaseInfo :: CaseTypeInfo (S n) -> Thawer n (CaseTypeInfo n)
+thawLocalCaseInfo CaseTypeInfo {..} =
   CaseTypeInfo
-    <$> unsubstBVarValM i caseRetTy
-    <*> mapM (unsubstBVarValM i) caseAltArgs
+    <$> thawLocalValM caseRetTy
+    <*> mapM thawLocalValM caseAltArgs
 
-unsubstBinderTy :: Int -> BinderTypeSpec -> Reader Int BinderTypeSpec
-unsubstBinderTy i BinderTypeSpec {..} = do
-  lvl <- ask
+thawLocalBinderTy :: BinderTypeSpec (S n) -> Thawer n (BinderTypeSpec n)
+thawLocalBinderTy BinderTypeSpec {..} = do
+  env <- ask
   BinderTypeSpec
-    <$> unsubstBVarValM i argType
+    <$> thawLocalValM argType
     <*> pure
-      ( flip runReader (lvl + 1)
-          . unsubstBVarValM i
-          . bodyType
-          . flip runReader lvl
-          . unsubstBVarValM i
-      )
+      (thawLocalWith (env & #curLvl +~ 1) . bodyType . withEnv env . injValueM)
 
-unsubstBVarValToM :: Int -> Int -> Value -> Value
-unsubstBVarValToM lvl i v = runReader (unsubstBVarValM i v) lvl
+withEnv :: e -> Reader e a -> a
+withEnv = flip runReader
 
-unsubstBVarValM :: Int -> Value -> Reader Int Value
-unsubstBVarValM i = go
+thawLocalValM :: Value' (S n) -> Thawer n (Value' n)
+thawLocalValM = go
   where
     go VStar = pure VStar
     go (VPi mv argTy f) = do
-      lvl <- ask
+      env <- ask
       VPi mv
-        <$> unsubstBVarValM i argTy
-        <*> pure (unsubstBVarValToM (lvl + 1) i . f)
+        <$> thawLocalValM argTy
+        <*> pure (thawLocalWith (env & #curLvl +~ 1) . f . injValueWith env)
     go (VLam lt name f) = do
-      lvl <- ask
+      env <- ask
       VLam
-        <$> unsubstBinderTy i lt
+        <$> thawLocalBinderTy lt
         <*> pure name
-        <*> pure (unsubstBVarValToM (lvl + 1) i . f)
+        <*> pure (thawLocalWith (env & #curLvl +~ 1) . f . injValueWith env)
     go (VSigma mv argTy f) = do
-      lvl <- ask
+      env <- ask
       VSigma mv
-        <$> unsubstBVarValM i argTy
-        <*> pure (unsubstBVarValToM (lvl + 1) i . f)
+        <$> thawLocalValM argTy
+        <*> pure (thawLocalWith (env & #curLvl +~ 1) . f . injValueWith env)
     go (VPair lt name l r) = do
       VPair
-        <$> unsubstBinderTy i lt
+        <$> thawLocalBinderTy lt
         <*> pure name
         <*> go l
         <*> go r
@@ -591,45 +596,220 @@ unsubstBVarValM i = go
       VMkRecord <$> mapM go fldTys <*> mapM go flds
     go (VVariant tags) = VVariant <$> mapM go tags
     go (VInj alts l v) = VInj <$> mapM go alts <*> pure l <*> go v
-    go (VNeutral n) = VNeutral <$> unsubstBoundNeutral i n
+    go (VNeutral n) = VNeutral <$> thawLocalNeutral n
 
-unsubstBoundNeutral :: Int -> Neutral -> Reader Int Neutral
-unsubstBoundNeutral i = go
+thawLocalWith :: ThawEnv n -> Value' (S n) -> Value' n
+thawLocalWith i = flip runReader i . thawLocalValM
+
+thawLocalNeutral :: Neutral' (S n) -> Thawer n (Neutral' n)
+thawLocalNeutral = go
   where
     go (NFree ty v) =
       NFree
-        <$> unsubstBVarValM i ty
-        <*> case v of
-          XName (EvLocal j)
-            | j == i -> asks $ Bound NoExtField
-          _ -> pure v
+        <$> thawLocalValM ty
+        <*> thawName v
     go (NApp ty l v) =
       NApp
-        <$> unsubstBVarValM i ty
+        <$> thawLocalValM ty
         <*> go l
-        <*> unsubstBVarValM i v
+        <*> thawLocalValM v
     go (NProjField ty p l) =
-      NProjField <$> unsubstBVarValM i ty <*> go p <*> pure l
+      NProjField <$> thawLocalValM ty <*> go p <*> pure l
     go (NSplit ty scrut2 ln rn b) = do
-      lvl <- ask
+      env <- ask
       NSplit
-        <$> unsubstBVarSplitInfo i ty
+        <$> thawLocalSplitInfo ty
         <*> go scrut2
         <*> pure ln
         <*> pure rn
-        <*> pure \l r -> runReader (unsubstBVarValM i $ b l r) lvl
+        <*> pure \l r ->
+          runReader
+            (thawLocalValM $ b (injValueWith env l) (injValueWith env r))
+            env
     go (NCase ty scr alts) = do
-      lvl <- ask
+      e <- ask
       NCase
-        <$> unsubstBVarCaseInfo i ty
+        <$> thawLocalCaseInfo ty
         <*> go scr
         <*> pure
           ( fmap
-              ((flip runReader lvl . unsubstBVarValM i) .)
+              (dimap (injValueWith e) (thawLocalWith e))
               alts
           )
 
-substBound :: HasCallStack => Int -> Value -> Type -> Value
+mapLocal :: (LIdx n -> Name (Eval' m)) -> Name (Eval' n) -> Name (Eval' m)
+mapLocal f = \case
+  XName (EvLocal l) -> f l
+  XName (Quote a) -> XName $ Quote a
+  Global x a -> Global x a
+  Bound x a -> Bound x a
+  PrimName x a -> PrimName x a
+
+mapLocalM :: Applicative f => (LIdx n -> f (Name (Eval' m))) -> Name (Eval' n) -> f (Name (Eval' m))
+mapLocalM f = \case
+  XName (EvLocal l) -> f l
+  XName (Quote a) -> pure $ XName $ Quote a
+  Global x a -> pure $ Global x a
+  Bound x a -> pure $ Bound x a
+  PrimName x a -> pure $ PrimName x a
+
+forLocal :: Name (Eval' n) -> (LIdx n -> Name (Eval' m)) -> Name (Eval' m)
+forLocal = flip mapLocal
+
+forLocalM ::
+  Applicative f =>
+  Name (Eval' n) ->
+  (LIdx n -> f (Name (Eval' m))) ->
+  f (Name (Eval' m))
+forLocalM = flip mapLocalM
+
+thawName :: Name (Eval' (S n)) -> Thawer n (Name (Eval' n))
+thawName = mapLocalM $ \case
+  Here -> views #curLvl $ Bound NoExtField
+  There l -> pure $ XName $ EvLocal l
+
+injValueWith :: ThawEnv n -> Value' n -> Value' (S n)
+injValueWith e = withEnv e . injValueM
+
+injValueM :: Value' n -> Thawer n (Value' (S n))
+injValueM VStar = pure VStar
+injValueM (VPi an argTy body) = VPi an <$> injValueM argTy <*> injBinder body
+injValueM (VSigma an argTy body) = VSigma an <$> injValueM argTy <*> injBinder body
+injValueM (VPair bs an argTy body) =
+  VPair <$> injBindTypeInfo bs <*> pure an <*> injValueM argTy <*> injValueM body
+injValueM (VLam ty n b) = do
+  VLam
+    <$> injBindTypeInfo ty
+    <*> pure n
+    <*> injBinder b
+injValueM (VRecord flds) = VRecord <$> mapM injValueM flds
+injValueM (VMkRecord fldTys flds) =
+  VMkRecord <$> mapM injValueM fldTys <*> mapM injValueM flds
+injValueM (VVariant alts) = VVariant <$> mapM injValueM alts
+injValueM (VInj alts tag x) =
+  VInj <$> mapM injValueM alts <*> pure tag <*> injValueM x
+injValueM (VNeutral n) = VNeutral <$> injNeutral n
+
+injNeutral :: Neutral' n -> Thawer n (Neutral' (S n))
+injNeutral (NFree ty name) =
+  NFree
+    <$> injValueM ty
+    <*> pure (forLocal name (XName . EvLocal . There))
+injNeutral (NApp ty l r) =
+  NApp <$> injValueM ty <*> injNeutral l <*> injValueM r
+injNeutral (NProjField ty e a) =
+  NProjField <$> injValueM ty <*> injNeutral e <*> pure a
+injNeutral (NSplit sinfo scrut ln rn b) =
+  NSplit
+    <$> injSInfo sinfo
+    <*> injNeutral scrut
+    <*> pure ln
+    <*> pure rn
+    <*> injBinder2 b
+injNeutral (NCase cinfo scrut b) =
+  NCase
+    <$> injCInfo cinfo
+    <*> injNeutral scrut
+    <*> mapM injBinder b
+
+injCInfo :: CaseTypeInfo n -> Thawer n (CaseTypeInfo (S n))
+injCInfo cinfo = do
+  caseRetTy <- injValueM $ cinfo ^. #caseRetTy
+  caseAltArgs <- mapM injValueM (cinfo ^. #caseAltArgs)
+  pure CaseTypeInfo {..}
+
+injSInfo :: SplitTypeInfo n -> Thawer n (SplitTypeInfo (S n))
+injSInfo sinfo = do
+  splitFstType <- injValueM $ sinfo ^. #splitFstType
+  splitSndType <- injBinder $ sinfo ^. #splitSndType
+  splitRetType <- injValueM $ sinfo ^. #splitRetType
+  pure SplitTypeInfo {..}
+
+injBindTypeInfo :: BinderTypeSpec n -> Thawer n (BinderTypeSpec (S n))
+injBindTypeInfo binfo = do
+  argType <- injValueM $ binfo ^. #argType
+  bodyType <- injBinder $ binfo ^. #bodyType
+  pure BinderTypeSpec {..}
+
+injBinder :: (Value' n -> Value' n) -> Thawer n (Value' (S n) -> Value' (S n))
+injBinder f = asks $ \e -> injValueWith e . f . withEnv e . projValueM
+
+injBinder2 :: (Value' n -> Value' n -> Value' n) -> Thawer n (Value' (S n) -> Value' (S n) -> Value' (S n))
+injBinder2 f = asks $ \e l r ->
+  injValueWith e $
+    f (withEnv e $ projValueM l) (withEnv e $ projValueM r)
+
+projValueM :: Value' (S n) -> Thawer n (Value' n)
+projValueM VStar = pure VStar
+projValueM (VPi an argTy body) = VPi an <$> projValueM argTy <*> projBinder body
+projValueM (VSigma an argTy body) = VSigma an <$> projValueM argTy <*> projBinder body
+projValueM (VPair bs an argTy body) =
+  VPair <$> projBindTypeInfo bs <*> pure an <*> projValueM argTy <*> projValueM body
+projValueM (VLam ty n b) = do
+  VLam
+    <$> projBindTypeInfo ty
+    <*> pure n
+    <*> projBinder b
+projValueM (VRecord flds) = VRecord <$> mapM projValueM flds
+projValueM (VMkRecord fldTys flds) =
+  VMkRecord <$> mapM projValueM fldTys <*> mapM projValueM flds
+projValueM (VVariant alts) = VVariant <$> mapM projValueM alts
+projValueM (VInj alts tag x) =
+  VInj <$> mapM projValueM alts <*> pure tag <*> projValueM x
+projValueM (VNeutral n) = VNeutral <$> projNeutral n
+
+projNeutral :: Neutral' (S n) -> Thawer n (Neutral' n)
+projNeutral (NFree ty name) =
+  NFree
+    <$> projValueM ty
+    <*> forLocalM name \case
+      There l -> pure $ XName $ EvLocal l
+      Here -> asks $ \ThawEnv {..} ->
+        Bound NoExtField curLvl
+projNeutral (NApp ty l r) =
+  NApp <$> projValueM ty <*> projNeutral l <*> projValueM r
+projNeutral (NProjField ty e a) =
+  NProjField <$> projValueM ty <*> projNeutral e <*> pure a
+projNeutral (NSplit sinfo scrut ln rn b) =
+  NSplit
+    <$> projSInfo sinfo
+    <*> projNeutral scrut
+    <*> pure ln
+    <*> pure rn
+    <*> projBinder2 b
+projNeutral (NCase cinfo scrut b) =
+  NCase
+    <$> projCInfo cinfo
+    <*> projNeutral scrut
+    <*> mapM projBinder b
+
+projCInfo :: CaseTypeInfo (S n) -> Thawer n (CaseTypeInfo n)
+projCInfo cinfo = do
+  caseRetTy <- projValueM $ cinfo ^. #caseRetTy
+  caseAltArgs <- mapM projValueM (cinfo ^. #caseAltArgs)
+  pure CaseTypeInfo {..}
+
+projBindTypeInfo :: BinderTypeSpec (S n) -> Thawer n (BinderTypeSpec n)
+projBindTypeInfo binfo = do
+  argType <- projValueM $ binfo ^. #argType
+  bodyType <- projBinder $ binfo ^. #bodyType
+  pure BinderTypeSpec {..}
+
+projSInfo :: SplitTypeInfo (S n) -> Thawer n (SplitTypeInfo n)
+projSInfo sinfo = do
+  splitFstType <- projValueM $ sinfo ^. #splitFstType
+  splitSndType <- projBinder $ sinfo ^. #splitSndType
+  splitRetType <- projValueM $ sinfo ^. #splitRetType
+  pure SplitTypeInfo {..}
+
+projBinder :: (Value' (S n) -> Value' (S n)) -> Thawer n (Value' n -> Value' n)
+projBinder b = asks $ \e -> dimap (injValueWith e) (withEnv e . projValueM) b
+
+projBinder2 :: (Value' (S n) -> Value' (S n) -> Value' (S n)) -> Thawer n (Value' n -> Value' n -> Value' n)
+projBinder2 f = asks $ \e l r ->
+  withEnv e $ projValueM $ f (injValueWith e l) (injValueWith e r)
+
+substBound :: HasCallStack => Int -> Value' n -> Type' n -> Value' n
 substBound i v (VLam lamTy mv f) =
   VLam (substBoundBinderSpec i v lamTy) mv $ substBound i v . f
 substBound _ _ VStar = VStar
@@ -646,14 +826,14 @@ substBound i v (VMkRecord fldTy flds) = VMkRecord (substBound i v <$> fldTy) $ s
 substBound i v (VVariant flds) = VVariant $ fmap (substBound i v) flds
 substBound i v (VInj alts l e) = VInj (substBound i v <$> alts) l $ substBound i v e
 
-substBoundBinderSpec :: Int -> Value -> BinderTypeSpec -> BinderTypeSpec
+substBoundBinderSpec :: Int -> Value' n -> BinderTypeSpec n -> BinderTypeSpec n
 substBoundBinderSpec i v l =
   BinderTypeSpec
     { argType = substBound i v $ argType l
     , bodyType = substBound i v . bodyType l
     }
 
-substBoundNeutral :: HasCallStack => Int -> Value -> Neutral -> Either Neutral Value
+substBoundNeutral :: HasCallStack => Int -> Value' n -> Neutral' n -> Either (Neutral' n) (Value' n)
 substBoundNeutral i v (NFree _ (Bound _ j)) | i == j = Right v
 substBoundNeutral i v (NFree ty name) =
   Left $ NFree (substBound i v ty) name
@@ -679,7 +859,7 @@ substBoundNeutral i v (NCase caseTy0 e valts) =
         Left e' -> Left $ NCase caseTy e' $ fmap (substBound i v .) valts
         Right e' -> Right $ evalCase caseTy e' valts
 
-substBoundSplitTy :: Int -> Value -> SplitTypeInfo -> SplitTypeInfo
+substBoundSplitTy :: Int -> Value' n -> SplitTypeInfo n -> SplitTypeInfo n
 substBoundSplitTy i v sinfo =
   SplitTypeInfo
     { splitFstType = substBound i v $ splitFstType sinfo
@@ -687,61 +867,63 @@ substBoundSplitTy i v sinfo =
     , splitRetType = substBound i v $ splitRetType sinfo
     }
 
-substBoundCaseTy :: Int -> Value -> CaseTypeInfo -> CaseTypeInfo
+substBoundCaseTy :: Int -> Value' n -> CaseTypeInfo n -> CaseTypeInfo n
 substBoundCaseTy i v cinfo =
   CaseTypeInfo
     { caseRetTy = substBound i v $ caseRetTy cinfo
     , caseAltArgs = substBound i v <$> caseAltArgs cinfo
     }
 
-data Eval deriving (Show, Eq, Ord, Generic, Data)
+type Eval = Eval' Z
 
-data EvalVars
+data Eval' (n :: Lvl) deriving (Show, Eq, Ord, Generic, Data)
+
+data EvalVars n
   = Quote !Int
-  | EvLocal !Int
-  deriving (Show, Eq, Ord, Generic, Data)
+  | EvLocal !(LIdx n)
+  deriving (Show, Eq, Ord, Generic)
   deriving anyclass (NFData)
 
-instance VarLike EvalVars where
+instance VarLike (EvalVars n) where
   varName (EvLocal i) =
     pure $
       Just $
         "<<EvLocal: " <> T.pack (show i) <> ">>"
   varName (Quote i) = pure $ Just $ "<<Quote:" <> tshow i <> ">>"
 
-type instance XName Eval = EvalVars
+type instance XName (Eval' n) = EvalVars n
 
-type instance XGlobal Eval = NoExtField
+type instance XGlobal (Eval' n) = NoExtField
 
-type instance XBound Eval = NoExtField
+type instance XBound (Eval' n) = NoExtField
 
-type instance XPrimName Eval = NoExtField
+type instance XPrimName (Eval' n) = NoExtField
 
-type instance XAnn Eval = Type
+type instance XAnn (Eval' n) = Type' n
 
-type instance AnnLHS Eval = Expr Eval
+type instance AnnLHS (Eval' n) = Expr (Eval' n)
 
-type instance AnnRHS Eval = Expr Eval
+type instance AnnRHS (Eval' n) = Expr (Eval' n)
 
-type instance XStar Eval = NoExtField
+type instance XStar (Eval' n) = NoExtField
 
-type instance XVar Eval = Type
+type instance XVar (Eval' n) = Type' n
 
-type instance XApp Eval = Type
+type instance XApp (Eval' n) = Type' n
 
-type instance AppLHS Eval = Expr Eval
+type instance AppLHS (Eval' n) = Expr (Eval' n)
 
-type instance AppRHS Eval = Expr Eval
+type instance AppRHS (Eval' n) = Expr (Eval' n)
 
-type instance XLam Eval = BinderTypeSpec
+type instance XLam (Eval' n) = BinderTypeSpec n
 
-data BinderTypeSpec = BinderTypeSpec
-  { argType :: !Type
-  , bodyType :: !(Type -> Type)
+data BinderTypeSpec n = BinderTypeSpec
+  { argType :: !(Type' n)
+  , bodyType :: !(Type' n -> Type' n)
   }
   deriving (Generic)
 
-instance Show BinderTypeSpec where
+instance Show (BinderTypeSpec n) where
   showsPrec _ spc =
     let (arg, bdy) = lamTypeSpecRank spc
      in showString "BinderTypeSpec { "
@@ -752,108 +934,108 @@ instance Show BinderTypeSpec where
           . shows bdy
           . showString " }"
 
-instance Eq BinderTypeSpec where
+instance Eq (BinderTypeSpec n) where
   (==) = (==) `on` lamTypeSpecRank
 
-instance Ord BinderTypeSpec where
+instance Ord (BinderTypeSpec n) where
   compare = comparing lamTypeSpecRank
 
-lamTypeSpecRank :: BinderTypeSpec -> (Type, Type)
+lamTypeSpecRank :: BinderTypeSpec n -> (Type' n, Type' n)
 lamTypeSpecRank l =
   (argType l, VPi Anonymous (argType l) $ bodyType l)
 
-type instance LamBindName Eval = AlphaName
+type instance LamBindName (Eval' n) = AlphaName
 
-type instance LamBindType Eval = Expr Eval
+type instance LamBindType (Eval' n) = Expr (Eval' n)
 
-type instance LamBody Eval = Expr Eval
+type instance LamBody (Eval' n) = Expr (Eval' n)
 
-type instance XPi Eval = NoExtField
+type instance XPi (Eval' n) = NoExtField
 
-type instance PiVarName Eval = AlphaName
+type instance PiVarName (Eval' n) = AlphaName
 
-type instance PiVarType Eval = Expr Eval
+type instance PiVarType (Eval' n) = Expr (Eval' n)
 
-type instance PiRHS Eval = Expr Eval
+type instance PiRHS (Eval' n) = Expr (Eval' n)
 
-type instance XSigma Eval = NoExtField
+type instance XSigma (Eval' n) = NoExtField
 
-type instance SigmaVarName Eval = AlphaName
+type instance SigmaVarName (Eval' n) = AlphaName
 
-type instance SigmaVarType Eval = Expr Eval
+type instance SigmaVarType (Eval' n) = Expr (Eval' n)
 
-type instance SigmaBody Eval = Expr Eval
+type instance SigmaBody (Eval' n) = Expr (Eval' n)
 
-type instance XLam Eval = BinderTypeSpec
+type instance XLam (Eval' n) = BinderTypeSpec n
 
-type instance XPair Eval = BinderTypeSpec
+type instance XPair (Eval' n) = BinderTypeSpec n
 
-type instance PairFst Eval = Expr Eval
+type instance PairFst (Eval' n) = Expr (Eval' n)
 
-type instance PairSnd Eval = Expr Eval
+type instance PairSnd (Eval' n) = Expr (Eval' n)
 
-type instance XSplit Eval = SplitTypeInfo
+type instance XSplit (Eval' n) = SplitTypeInfo n
 
-type instance SplitScrutinee Eval = Expr Eval
+type instance SplitScrutinee (Eval' n) = Expr (Eval' n)
 
-type instance SplitFstName Eval = AlphaName
+type instance SplitFstName (Eval' n) = AlphaName
 
-type instance SplitSndName Eval = AlphaName
+type instance SplitSndName (Eval' n) = AlphaName
 
-type instance SplitBody Eval = Expr Eval
+type instance SplitBody (Eval' n) = Expr (Eval' n)
 
-type instance XLet Eval = Type
+type instance XLet (Eval' n) = Type' n
 
-type instance LetName Eval = AlphaName
+type instance LetName (Eval' n) = AlphaName
 
-type instance LetRHS Eval = Expr Eval
+type instance LetRHS (Eval' n) = Expr (Eval' n)
 
-type instance LetBody Eval = Expr Eval
+type instance LetBody (Eval' n) = Expr (Eval' n)
 
-type instance XRecord Eval = NoExtField
+type instance XRecord (Eval' n) = NoExtField
 
-type instance RecordFieldType Eval = Expr Eval
+type instance RecordFieldType (Eval' n) = Expr (Eval' n)
 
-type instance XProjField Eval = Type
+type instance XProjField (Eval' n) = Type' n
 
-type instance ProjFieldRecord Eval = Expr Eval
+type instance ProjFieldRecord (Eval' n) = Expr (Eval' n)
 
-type instance XMkRecord Eval = HashMap Text Type
+type instance XMkRecord (Eval' n) = HashMap Text (Type' n)
 
-type instance RecordField Eval = Expr Eval
+type instance RecordField (Eval' n) = Expr (Eval' n)
 
-type instance XOpen Eval = Type
+type instance XOpen (Eval' n) = Type' n
 
-type instance OpenRecord Eval = Expr Eval
+type instance OpenRecord (Eval' n) = Expr (Eval' n)
 
-type instance OpenBody Eval = Expr Eval
+type instance OpenBody (Eval' n) = Expr (Eval' n)
 
-type instance XVariant Eval = NoExtField
+type instance XVariant (Eval' n) = NoExtField
 
-type instance VariantArgType Eval = Expr Eval
+type instance VariantArgType (Eval' n) = Expr (Eval' n)
 
-type instance XInj Eval = HashMap Text Type
+type instance XInj (Eval' n) = HashMap Text (Type' n)
 
-type instance InjArg Eval = Expr Eval
+type instance InjArg (Eval' n) = Expr (Eval' n)
 
-data CaseTypeInfo = CaseTypeInfo
-  { caseRetTy :: Type
-  , caseAltArgs :: HM.HashMap Text Type
+data CaseTypeInfo n = CaseTypeInfo
+  { caseRetTy :: Type' n
+  , caseAltArgs :: HM.HashMap Text (Type' n)
   }
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (NFData)
 
-type instance XCase Eval = CaseTypeInfo
+type instance XCase (Eval' n) = CaseTypeInfo n
 
-type instance CaseArg Eval = Expr Eval
+type instance CaseArg (Eval' n) = Expr (Eval' n)
 
-type instance XCaseAlt Eval = NoExtField
+type instance XCaseAlt (Eval' n) = NoExtField
 
-type instance CaseAltVarName Eval = AlphaName
+type instance CaseAltVarName (Eval' n) = AlphaName
 
-type instance CaseAltBody Eval = Expr Eval
+type instance CaseAltBody (Eval' n) = Expr (Eval' n)
 
-type instance XExpr Eval = NoExtCon
+type instance XExpr (Eval' n) = NoExtCon
 
-instance Show Neutral where
+instance Show (Neutral' n) where
   show = show . quoteNeutral 0

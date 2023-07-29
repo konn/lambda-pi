@@ -32,6 +32,7 @@ library
       GHC.Generics.Constraint
       Language.Lambda.Syntax.LambdaPi
       Language.Lambda.Syntax.LambdaPi.Eval
+      Language.Lambda.Syntax.LambdaPi.Locals
       Language.Lambda.Syntax.LambdaPi.Parser
       Language.Lambda.Syntax.LambdaPi.QuasiQuotes
       Language.Lambda.Syntax.LambdaPi.Rename
@@ -73,6 +74,7 @@ library
     , parser-combinators
     , parsers
     , pretty
+    , profunctors
     , rio
     , rio-orphans
     , semialign
@@ -126,6 +128,7 @@ executable lambda-pi-exe
     , parser-combinators
     , parsers
     , pretty
+    , profunctors
     , rio
     , rio-orphans
     , semialign
@@ -188,6 +191,7 @@ test-suite lambda-pi-test
     , parser-combinators
     , parsers
     , pretty
+    , profunctors
     , rio
     , rio-orphans
     , selective
