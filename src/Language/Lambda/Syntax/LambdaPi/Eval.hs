@@ -667,13 +667,6 @@ mapLocalM f = \case
 forLocal :: Name (Eval' n) -> (Ordinal n -> Name (Eval' m)) -> Name (Eval' m)
 forLocal = flip mapLocal
 
-forLocalM ::
-  (Applicative f) =>
-  Name (Eval' n) ->
-  (Ordinal n -> f (Name (Eval' m))) ->
-  f (Name (Eval' m))
-forLocalM = flip mapLocalM
-
 thawName :: Name (Eval' (S n)) -> Thawer n (Name (Eval' n))
 thawName = mapLocalM $ \k -> do
   case predOrd k of
@@ -821,12 +814,12 @@ projBinder2 f = asks $ \e l r ->
 
 substBound :: (HasCallStack) => Int -> Value' n -> Type' n -> Value' n
 substBound i v (VLam lamTy mv f) =
-  VLam (substBoundBinderSpec i v lamTy) mv $ substBound i v . f
+  VLam (substBoundBinderSpec i v lamTy) mv $ substBound (i + 1) v . f
 substBound _ _ VStar = VStar
 substBound i v (VPi mv va f) =
-  VPi mv (substBound i v va) $ substBound i v . f
+  VPi mv (substBound i v va) $ substBound (i + 1) v . f
 substBound i v (VSigma mv va f) =
-  VSigma mv (substBound i v va) $ substBound i v . f
+  VSigma mv (substBound i v va) $ substBound (i + 1) v . f
 substBound i v (VPair ty mv l r) =
   VPair (substBoundBinderSpec i v ty) mv (substBound i v l) (substBound i v r)
 substBound i v (VNeutral neu) =
@@ -844,7 +837,9 @@ substBoundBinderSpec i v l =
     }
 
 substBoundNeutral :: (HasCallStack) => Int -> Value' n -> Neutral' n -> Either (Neutral' n) (Value' n)
-substBoundNeutral i v (NFree _ (Bound _ j)) | i == j = Right v
+substBoundNeutral i v (NFree ty (Bound e j))
+  | j == i = Right v
+  | j > i = Left $ NFree ty $ Bound e (j - 1)
 substBoundNeutral i v (NFree ty name) =
   Left $ NFree (substBound i v ty) name
 substBoundNeutral i v (NApp retTy0 neu' va) =
