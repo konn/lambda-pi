@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Language.Lambda.Syntax.LambdaPi.REPL where
@@ -19,6 +20,7 @@ import Data.Functor ((<&>))
 import Data.Generics.Labels ()
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
+import Data.Level
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
@@ -41,7 +43,7 @@ data Stmt
   | Assume (NonEmpty (Text, Expr Parse))
   deriving (Show)
 
-newtype REPLContext = REPLCtx {bindings :: HashMap Text VarInfo}
+newtype REPLContext = REPLCtx {bindings :: HashMap Text (VarInfo' Z)}
   deriving (Show, Generic)
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid REPLContext
 
@@ -141,7 +143,7 @@ checkTypeM trm ty = do
   gamma <- typingContextM
   trm' <-
     either (throwM . TypeError) pure $
-      typeCheck 0 gamma trm ty
+      typeCheck gamma trm ty
   evalCtx <- evalContextM
   pure $ eval evalCtx trm'
 
@@ -164,22 +166,22 @@ inferEvalM ::
 inferEvalM trm = do
   ctx <- typingContextM
   (typ, e') <-
-    either (throwM . TypeError) pure $ typeInfer 0 ctx trm
+    either (throwM . TypeError) pure $ typeInfer ctx trm
   evalCtx <- evalContextM
   let !val = eval evalCtx e'
   pure (val, typ)
 
 typingContextM ::
-  MonadState REPLContext m => m Context
+  (MonadState REPLContext m) => m Context
 typingContextM =
   use #bindings <&> \gs ->
     mempty {globals = gs}
 
 evalContextM ::
-  MonadState REPLContext m => m Env
+  (MonadState REPLContext m) => m Env
 evalContextM =
   use #bindings <&> \dic ->
-    mempty & #namedBinds .~ HM.mapMaybe varValue dic
+    mempty @Env & #namedBinds .~ HM.mapMaybe varValue dic
 
 stmtP :: Parser Stmt
 stmtP = clearP <|> letP <|> assumeP <|> Eval <$> exprP

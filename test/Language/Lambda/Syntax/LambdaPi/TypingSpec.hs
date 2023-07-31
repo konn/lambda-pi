@@ -9,7 +9,7 @@ import qualified Data.Bifunctor as Bi
 import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Language.Lambda.Syntax.LambdaPi
-import Language.Lambda.Syntax.LambdaPi.Eval (Neutral (..), vSucc, vZero, (@@))
+import Language.Lambda.Syntax.LambdaPi.Eval (vSucc, vZero, (@@))
 import Language.Lambda.Syntax.LambdaPi.Parser
 import Language.Lambda.Syntax.LambdaPi.Rename
 import Language.Lambda.Syntax.LambdaPi.Typing
@@ -29,12 +29,6 @@ infCases =
         (AlphaName "x")
         VStar
         (\v -> VPi (AlphaName "a") v $ const v)
-    )
-  ,
-    ( inf "λ(a: Type) (n: Nat). nil a"
-    , VPi (AlphaName "z") VStar $ \z ->
-        VPi (AlphaName "l") VNat $ \_ ->
-          VVec z vZero
     )
   , (inf "natElim (λ n. ℕ) 3 (λ k. succ) 2", VNat)
   ,
@@ -77,6 +71,19 @@ infCases =
               VPi (AlphaName "m") VNat $ \n ->
                 f @@ n
     )
+  ,
+    ( inf "λ (a : Type) (n : Nat) (f : a -> a). natElim (λ _. a -> a) (λ x. x) (λ _ fn x. f (fn x)) n"
+    , VPi (AlphaName "a") VStar $ \a ->
+        VPi (AlphaName "n") VNat $ \_n ->
+          VPi (AlphaName "f") (a ~> a) $ \_f ->
+            a ~> a
+    )
+  ,
+    ( inf "(λ (a : Type) (n : Nat) (f : a -> a). natElim (λ _. a -> a) (λ x. x) (λ _ fn x. f (fn x)) n) Nat"
+    , VPi (AlphaName "n") VNat $ \_n ->
+        VPi (AlphaName "f") (VNat ~> VNat) $ \_f ->
+          VNat ~> VNat
+    )
   ]
 
 pattern VNat :: Value
@@ -97,7 +104,7 @@ test_typeInfer =
   testGroup
     "typeInfer"
     [ testCaseSteps (show $ parens (pprint e)) $ \step ->
-      case typeInfer 0 mempty e of
+      case typeInfer mempty e of
         Left err -> assertFailure $ "Typing error: " <> err
         Right (ty0, eTy) -> do
           step "Check if type matches"
@@ -114,7 +121,7 @@ test_typeCheck =
     "typeCheck"
     [ testCaseSteps (show $ parens (pprint e)) $ \step -> do
       step "check type"
-      case typeCheck 0 mempty e ty of
+      case typeCheck mempty e ty of
         Left err -> assertFailure $ "Typing error: " <> err
         Right eTy -> do
           step "Check if typed term dosn't contain bottom"

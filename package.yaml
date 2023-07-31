@@ -49,6 +49,7 @@ dependencies:
 - parser-combinators
 - parsers
 - pretty
+- profunctors
 - rio
 - rio-orphans
 - semialign
@@ -92,6 +93,9 @@ tests:
     - tasty-discover
     dependencies:
     - lambda-pi
+    - dlist
+    - falsify
+    - selective
     - tasty
     - tasty-hunit
     - tasty-quickcheck

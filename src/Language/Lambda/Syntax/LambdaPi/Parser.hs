@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -44,7 +45,6 @@ import Data.Data (Data)
 import Data.Functor
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HS
-import Data.List (foldl1')
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as Map
 import Data.Semigroup
@@ -93,7 +93,7 @@ appSpaceP =
       )
 
 termP :: Parser ParsedExpr
-termP = piP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> caseP <|> lamP <|> varP <|> parens exprP
+termP = piP <|> sigmaP <|> primTypeP <|> compoundTyConP <|> dataConP <|> eliminatorsP <|> letP <|> splitP <|> caseP <|> lamP <|> varP <|> parens exprP
 
 openP :: Parser ParsedExpr
 openP =
@@ -128,6 +128,23 @@ caseP =
         (symbol "}")
         (CaseAlts <$> (caseAltP `sepBy` symbol ";"))
 
+pairP :: Parser ParsedExpr
+pairP =
+  label "pair-expression" $
+    between (symbol "⟨") (symbol "⟩") $
+      Pair NoExtField
+        <$> exprP
+        <* symbol ","
+        <*> exprP
+
+splitP :: Parser ParsedExpr
+splitP = label "split-expression" $ do
+  lName <- reserved "split" *> symbol "⟨" *> identifier <* symbol ","
+  rName <- identifier <* symbol "⟩" <* reservedOp "="
+  s <- exprP <* reserved "in"
+  b <- exprP
+  pure $ Split NoExtField s lName rName b
+
 caseAltP :: Parser (Text, CaseAlt Parse)
 caseAltP =
   (,)
@@ -144,6 +161,15 @@ piP = label "Pi-binding" $ do
   bindees <- sconcat <$> NE.some annBinder <* symbol "."
   foldr
     (\(v, ty) p -> Pi NoExtField (DepNamed v) ty <$> p)
+    exprP
+    bindees
+
+sigmaP :: Parser ParsedExpr
+sigmaP = label "Sigma-binding" $ do
+  reserved "Σ"
+  bindees <- sconcat <$> NE.some annBinder <* symbol "."
+  foldr
+    (\(v, ty) p -> Sigma NoExtField (DepNamed v) ty <$> p)
     exprP
     bindees
 
@@ -182,41 +208,7 @@ annBinder =
 eliminatorsP :: Parser ParsedExpr
 eliminatorsP =
   Prim NatElim <$ reserved "natElim"
-    <|> vecElim' <$ reserved "vecElim"
     <|> try openP
-
-vecElim' :: ParsedExpr
-vecElim' =
-  Lam NoExtField "a" (Just star)
-    $ Lam
-      NoExtField
-      "t"
-      ( Just $
-          Pi NoExtField (DepNamed "n") nat $
-            Pi
-              NoExtField
-              Indep
-              (Vec NoExtField (var "a") (var "n"))
-              star
-      )
-    $ Lam
-      NoExtField
-      "base"
-      ( Just $ apps [var "t", zero, Nil NoExtField (var "a")]
-      )
-    $ Lam
-      NoExtField
-      "ind"
-      ( Just $
-          Pi NoExtField (DepNamed "n") nat $
-            Pi NoExtField (DepNamed "x") (var "a") $
-              Pi NoExtField (DepNamed "xs") (Vec NoExtField (var "a") (var "n")) $
-                Pi NoExtField Indep (apps [var "t", var "n", var "xs"]) $
-                  apps [var "t", Succ' (var "n"), Cons NoExtField (var "a") (var "n") (var "x") (var "xs")]
-      )
-    $ Lam NoExtField "n" (Just nat)
-    $ Lam NoExtField "xs" (Just $ Vec NoExtField (var "a") (var "n"))
-    $ apps [var "t", var "n", var "xs"]
 
 pattern Succ' :: Expr Parse -> Expr Parse
 pattern Succ' e = App NoExtField (Prim Succ) e
@@ -224,16 +216,12 @@ pattern Succ' e = App NoExtField (Prim Succ) e
 pattern Prim :: Prim -> Expr Parse
 pattern Prim p = Var NoExtField (PrimName NoExtField p)
 
-apps :: [ParsedExpr] -> Expr Parse
-apps = foldl1' (App NoExtField)
-
 dataConP :: Parser ParsedExpr
 dataConP =
   naturalP
-    <|> Lam NoExtField "t" (Just star) (Nil NoExtField (var "t")) <$ reserved "nil"
     <|> Prim Zero <$ reserved "zero"
     <|> Prim Succ <$ reserved "succ"
-    <|> cons' <$ reserved "cons"
+    <|> pairP
     <|> recordP
     <|> varInjP
 
@@ -245,20 +233,6 @@ recordP =
       (symbol "{")
       (symbol "}")
       (MkRecordFields <$> fieldSeqP "field" (symbol ",") (symbol "="))
-
-cons' :: ParsedExpr
-cons' =
-  Lam
-    NoExtField
-    "t"
-    (Just star)
-    $ Lam NoExtField "n" (Just nat)
-    $ Lam NoExtField "x" (Just (var "t"))
-    $ Lam NoExtField "xs" (Just (Vec NoExtField (var "t") (var "n")))
-    $ Cons NoExtField (var "t") (var "n") (var "x") (var "xs")
-
-var :: Text -> ParsedExpr
-var = Var NoExtField . Global NoExtField
 
 naturalP :: Parser ParsedExpr
 naturalP =
@@ -274,11 +248,8 @@ zero = Prim Zero
 nat :: Expr Parse
 nat = Prim Nat
 
-star :: Expr Parse
-star = Star NoExtField
-
 compoundTyConP :: Parser ParsedExpr
-compoundTyConP = vecCon' <$ reserved "Vec" <|> recordTyP <|> variantTyP
+compoundTyConP = recordTyP <|> variantTyP
 
 recordTyP :: Parser ParsedExpr
 recordTyP = try (between (symbol "{") (symbol "}") (Record NoExtField . RecordFieldTypes <$> fieldSeqP "field" (symbol ",") (symbol ":")))
@@ -317,9 +288,6 @@ fieldSeqP tokenName sep fldSep = do
         <> show dups
   pure flds
 
-vecCon' :: ParsedExpr
-vecCon' = Lam NoExtField "t" (Just (Star NoExtField)) $ Lam NoExtField "n" (Just nat) $ Vec NoExtField (Var NoExtField (Global NoExtField "t")) (Var NoExtField (Global NoExtField "n"))
-
 varP :: Parser ParsedExpr
 varP = Var NoExtField . Global NoExtField <$> identifier
 
@@ -337,7 +305,7 @@ space =
     (skipBlockCommentNested "{-" "-}")
 
 keywords :: HS.HashSet Text
-keywords = HS.fromList ["λ", "Π", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let", "case", "of"]
+keywords = HS.fromList ["λ", "Π", "Σ", "natElim", "0", "succ", "zero", "vecElim", "nil", "cons", "ℕ", "Nat", "Vec", "Type", "record", "open", "in", "let", "case", "of", "split"]
 
 isIdentHeadChar :: Char -> Bool
 isIdentHeadChar ch = isAlpha ch || ch == '_' || ch == '★'
@@ -455,6 +423,30 @@ type instance PiVarType Parse = Expr Parse
 
 type instance PiRHS Parse = Expr Parse
 
+type instance XSigma Parse = NoExtField
+
+type instance SigmaVarName Parse = DepName
+
+type instance SigmaVarType Parse = Expr Parse
+
+type instance SigmaBody Parse = Expr Parse
+
+type instance XPair Parse = NoExtField
+
+type instance PairFst Parse = Expr Parse
+
+type instance PairSnd Parse = Expr Parse
+
+type instance XSplit Parse = NoExtField
+
+type instance SplitScrutinee Parse = Expr Parse
+
+type instance SplitFstName Parse = Text
+
+type instance SplitSndName Parse = Text
+
+type instance SplitBody Parse = Expr Parse
+
 type instance XLet Parse = NoExtField
 
 type instance LetName Parse = Text
@@ -462,40 +454,6 @@ type instance LetName Parse = Text
 type instance LetRHS Parse = Expr Parse
 
 type instance LetBody Parse = Expr Parse
-
-type instance XVec Parse = NoExtField
-
-type instance VecType Parse = Expr Parse
-
-type instance VecLength Parse = Expr Parse
-
-type instance XNil Parse = NoExtField
-
-type instance NilType Parse = Expr Parse
-
-type instance XCons Parse = NoExtField
-
-type instance ConsType Parse = Expr Parse
-
-type instance ConsLength Parse = Expr Parse
-
-type instance ConsHead Parse = Expr Parse
-
-type instance ConsTail Parse = Expr Parse
-
-type instance XVecElim Parse = NoExtField
-
-type instance VecElimEltType Parse = Expr Parse
-
-type instance VecElimRetFamily Parse = Expr Parse
-
-type instance VecElimBaseCase Parse = Expr Parse
-
-type instance VecElimInductiveStep Parse = Expr Parse
-
-type instance VecElimLength Parse = Expr Parse
-
-type instance VecElimInput Parse = Expr Parse
 
 type instance XRecord Parse = NoExtField
 

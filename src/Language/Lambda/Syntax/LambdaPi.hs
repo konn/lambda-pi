@@ -14,6 +14,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -77,34 +78,29 @@ module Language.Lambda.Syntax.LambdaPi (
   PiVarType,
   PiRHS,
 
+  -- *** Sigma-types
+  XSigma,
+  SigmaVarName,
+  SigmaVarType,
+  SigmaBody,
+
+  -- **** Construction
+  XPair,
+  PairFst,
+  PairSnd,
+
+  -- **** Destruction
+  XSplit,
+  SplitScrutinee,
+  SplitFstName,
+  SplitSndName,
+  SplitBody,
+
   -- *** Let-expressions
   XLet,
   LetName,
   LetRHS,
   LetBody,
-
-  -- *** Vectors
-  XVec,
-  VecType,
-  VecLength,
-
-  -- **** Constructors
-  XNil,
-  NilType,
-  XCons,
-  ConsType,
-  ConsLength,
-  ConsHead,
-  ConsTail,
-
-  -- **** Elminator
-  XVecElim,
-  VecElimEltType,
-  VecElimRetFamily,
-  VecElimBaseCase,
-  VecElimInductiveStep,
-  VecElimLength,
-  VecElimInput,
 
   -- *** Records
   XRecord,
@@ -181,7 +177,9 @@ import Text.PrettyPrint.Monadic
 
 data Located e a = Loc {location :: !e, unLoc :: !a}
   deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-  deriving anyclass (Bitraversable)
+
+instance Bitraversable Located where
+  bitraverse f g (Loc l a) = Loc <$> f l <*> g a
 
 instance Bifunctor Located where
   bimap = bimapDefault
@@ -213,18 +211,10 @@ data Expr phase
   | App (XApp phase) (AppLHS phase) (AppRHS phase)
   | Lam (XLam phase) (LamBindName phase) (LamBindType phase) (LamBody phase)
   | Pi (XPi phase) (PiVarName phase) (PiVarType phase) (PiRHS phase)
+  | Sigma (XSigma phase) (SigmaVarName phase) (SigmaVarType phase) (SigmaBody phase)
+  | Pair (XPair phase) (PairFst phase) (PairSnd phase)
+  | Split (XSplit phase) (SplitScrutinee phase) (SplitFstName phase) (SplitSndName phase) (SplitBody phase)
   | Let (XLet phase) (LetName phase) (LetRHS phase) (LetBody phase)
-  | Vec (XVec phase) (VecType phase) (VecLength phase)
-  | Nil (XNil phase) (NilType phase)
-  | Cons (XCons phase) (ConsType phase) (ConsLength phase) (ConsHead phase) (ConsTail phase)
-  | VecElim
-      (XVecElim phase)
-      (VecElimEltType phase)
-      (VecElimRetFamily phase)
-      (VecElimBaseCase phase)
-      (VecElimInductiveStep phase)
-      (VecElimLength phase)
-      (VecElimInput phase)
   | Record (XRecord phase) (RecordFieldTypes phase)
   | MkRecord (XMkRecord phase) (MkRecordFields phase)
   | ProjField (XProjField phase) (ProjFieldRecord phase) Text
@@ -236,10 +226,10 @@ data Expr phase
   | XExpr (XExpr phase)
   deriving (Generic)
 
-_Var :: Generic (Expr p) => Prism' (Expr p) (XVar p, Name p)
+_Var :: (Generic (Expr p)) => Prism' (Expr p) (XVar p, Name p)
 _Var = #_Var
 
-deriving instance FieldC NFData (Expr p) => NFData (Expr p)
+deriving instance (FieldC NFData (Expr p)) => NFData (Expr p)
 
 deriving instance (Data p, FieldC Data (Expr p)) => Data (Expr p)
 
@@ -269,17 +259,17 @@ instance Ord AlphaName where
   (>) = const $ const False
   (>=) = const $ const True
 
-instance GPlated (Expr phase) (Rep (Expr phase)) => Plated (Expr phase) where
+instance (GPlated (Expr phase) (Rep (Expr phase))) => Plated (Expr phase) where
   plate = gplate
   {-# INLINE plate #-}
 
-deriving instance FieldC Show (Expr phase) => Show (Expr phase)
+deriving instance (FieldC Show (Expr phase)) => Show (Expr phase)
 
-deriving instance FieldC Eq (Expr phase) => Eq (Expr phase)
+deriving instance (FieldC Eq (Expr phase)) => Eq (Expr phase)
 
-deriving instance FieldC Ord (Expr phase) => Ord (Expr phase)
+deriving instance (FieldC Ord (Expr phase)) => Ord (Expr phase)
 
-deriving anyclass instance FieldC Hashable (Expr phase) => Hashable (Expr phase)
+deriving anyclass instance (FieldC Hashable (Expr phase)) => Hashable (Expr phase)
 
 instance Pretty e Prim where
   pretty Unit = "Unit"
@@ -301,16 +291,16 @@ instance Pretty e NoExtCon where
   pretty = noExtCon
 
 data Name p
-  = Global (XGlobal p) Text
-  | Bound (XBound p) Int
-  | PrimName (XPrimName p) Prim
+  = Global (XGlobal p) !Text
+  | Bound (XBound p) !Int
+  | PrimName (XPrimName p) !Prim
   | XName (XName p)
   deriving (Generic)
 
 _XName :: Prism' (Name p) (XName p)
 _XName = #_XName
 
-deriving anyclass instance FieldC NFData (Name p) => NFData (Name p)
+deriving anyclass instance (FieldC NFData (Name p)) => NFData (Name p)
 
 deriving instance (Data p, FieldC Data (Name p)) => Data (Name p)
 
@@ -320,13 +310,13 @@ type family XBound p
 
 type family XPrimName p
 
-deriving instance FieldC Show (Name p) => Show (Name p)
+deriving instance (FieldC Show (Name p)) => Show (Name p)
 
-deriving instance FieldC Eq (Name p) => Eq (Name p)
+deriving instance (FieldC Eq (Name p)) => Eq (Name p)
 
-deriving instance FieldC Ord (Name p) => Ord (Name p)
+deriving instance (FieldC Ord (Name p)) => Ord (Name p)
 
-deriving anyclass instance FieldC Hashable (Name p) => Hashable (Name p)
+deriving anyclass instance (FieldC Hashable (Name p)) => Hashable (Name p)
 
 type family XName p
 
@@ -385,6 +375,30 @@ type family PiVarType p
 
 type family PiRHS p
 
+type family XSigma p
+
+type family SigmaVarName p
+
+type family SigmaVarType p
+
+type family SigmaBody p
+
+type family XPair p
+
+type family PairFst p
+
+type family PairSnd p
+
+type family XSplit p
+
+type family SplitScrutinee p
+
+type family SplitFstName p
+
+type family SplitSndName p
+
+type family SplitBody p
+
 type family XLet p
 
 type family LetName p
@@ -392,40 +406,6 @@ type family LetName p
 type family LetRHS p
 
 type family LetBody p
-
-type family XVec p
-
-type family VecType p
-
-type family VecLength p
-
-type family XNil p
-
-type family NilType p
-
-type family XCons p
-
-type family ConsType p
-
-type family ConsLength p
-
-type family ConsHead p
-
-type family ConsTail p
-
-type family XVecElim p
-
-type family VecElimEltType p
-
-type family VecElimRetFamily p
-
-type family VecElimBaseCase p
-
-type family VecElimInductiveStep p
-
-type family VecElimLength p
-
-type family VecElimInput p
 
 type family XRecord p
 
@@ -439,12 +419,12 @@ deriving instance (Data (RecordFieldType p), Data p) => Data (RecordFieldTypes p
 deriving newtype instance (NFData (RecordFieldType p)) => NFData (RecordFieldTypes p)
 
 deriving instance
-  Show (RecordFieldType p) => Show (RecordFieldTypes p)
+  (Show (RecordFieldType p)) => Show (RecordFieldTypes p)
 
-instance Eq (RecordFieldType p) => Eq (RecordFieldTypes p) where
+instance (Eq (RecordFieldType p)) => Eq (RecordFieldTypes p) where
   (==) = (==) `on` Map.fromList . recFieldTypes
 
-instance Ord (RecordFieldType p) => Ord (RecordFieldTypes p) where
+instance (Ord (RecordFieldType p)) => Ord (RecordFieldTypes p) where
   compare = comparing $ Map.fromList . recFieldTypes
 
 type family XProjField p
@@ -460,17 +440,17 @@ newtype MkRecordFields p = MkRecordFields {mkRecFields :: [(Text, RecordField p)
 
 deriving instance (Data p, Data (RecordField p)) => Data (MkRecordFields p)
 
-deriving instance Show (RecordField p) => Show (MkRecordFields p)
+deriving instance (Show (RecordField p)) => Show (MkRecordFields p)
 
-instance Eq (RecordField p) => Eq (MkRecordFields p) where
+instance (Eq (RecordField p)) => Eq (MkRecordFields p) where
   (==) = (==) `on` Map.fromList . mkRecFields
 
-instance Ord (RecordField p) => Ord (MkRecordFields p) where
+instance (Ord (RecordField p)) => Ord (MkRecordFields p) where
   compare = comparing $ Map.fromList . mkRecFields
 
-deriving anyclass instance NFData (RecordField p) => NFData (MkRecordFields p)
+deriving anyclass instance (NFData (RecordField p)) => NFData (MkRecordFields p)
 
-deriving anyclass instance Hashable (RecordField p) => Hashable (MkRecordFields p)
+deriving anyclass instance (Hashable (RecordField p)) => Hashable (MkRecordFields p)
 
 type family XOpen p
 
@@ -483,16 +463,16 @@ type family XVariant p
 newtype VariantTags p = VariantTags {variantTags :: [(Text, VariantArgType p)]}
   deriving (Generic)
 
-deriving newtype instance NFData (VariantArgType p) => NFData (VariantTags p)
+deriving newtype instance (NFData (VariantArgType p)) => NFData (VariantTags p)
 
 deriving instance (Data (VariantArgType p), Data p) => Data (VariantTags p)
 
-deriving instance Show (VariantArgType p) => Show (VariantTags p)
+deriving instance (Show (VariantArgType p)) => Show (VariantTags p)
 
-instance Eq (VariantArgType p) => Eq (VariantTags p) where
+instance (Eq (VariantArgType p)) => Eq (VariantTags p) where
   (==) = (==) `on` Map.fromList . variantTags
 
-instance Ord (VariantArgType p) => Ord (VariantTags p) where
+instance (Ord (VariantArgType p)) => Ord (VariantTags p) where
   compare = comparing $ Map.fromList . variantTags
 
 type family VariantArgType p
@@ -519,32 +499,32 @@ data CaseAlt p = CaseAlt
   deriving (Generic)
 
 deriving anyclass instance
-  FieldC NFData (CaseAlt p) => NFData (CaseAlt p)
+  (FieldC NFData (CaseAlt p)) => NFData (CaseAlt p)
 
 deriving instance (Data p, FieldC Data (CaseAlt p)) => Data (CaseAlt p)
 
-deriving instance FieldC Show (CaseAlt p) => Show (CaseAlt p)
+deriving instance (FieldC Show (CaseAlt p)) => Show (CaseAlt p)
 
-deriving instance FieldC Eq (CaseAlt p) => Eq (CaseAlt p)
+deriving instance (FieldC Eq (CaseAlt p)) => Eq (CaseAlt p)
 
-deriving instance FieldC Ord (CaseAlt p) => Ord (CaseAlt p)
+deriving instance (FieldC Ord (CaseAlt p)) => Ord (CaseAlt p)
 
-deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlt p)
+deriving anyclass instance (FieldC Hashable (CaseAlt p)) => Hashable (CaseAlt p)
 
 newtype CaseAlts p = CaseAlts {getCaseAlts :: [(Text, CaseAlt p)]}
   deriving (Generic)
 
-deriving newtype instance NFData (CaseAlt p) => NFData (CaseAlts p)
+deriving newtype instance (NFData (CaseAlt p)) => NFData (CaseAlts p)
 
 deriving instance (Data p, Data (CaseAlt p)) => Data (CaseAlts p)
 
-deriving instance FieldC Show (CaseAlt p) => Show (CaseAlts p)
+deriving instance (FieldC Show (CaseAlt p)) => Show (CaseAlts p)
 
-deriving instance FieldC Eq (CaseAlt p) => Eq (CaseAlts p)
+deriving instance (FieldC Eq (CaseAlt p)) => Eq (CaseAlts p)
 
-deriving instance FieldC Ord (CaseAlt p) => Ord (CaseAlts p)
+deriving instance (FieldC Ord (CaseAlt p)) => Ord (CaseAlts p)
 
-deriving anyclass instance FieldC Hashable (CaseAlt p) => Hashable (CaseAlts p)
+deriving anyclass instance (FieldC Hashable (CaseAlt p)) => Hashable (CaseAlts p)
 
 type family XExpr p
 
@@ -556,7 +536,7 @@ data PrettyEnv = PrettyEnv
   deriving (Semigroup, Monoid) via GenericSemigroupMonoid PrettyEnv
 
 class VarLike v where
-  varName :: MonadReader PrettyEnv m => v -> m (Maybe Text)
+  varName :: (MonadReader PrettyEnv m) => v -> m (Maybe Text)
 
 instance VarLike DepName where
   varName Indep = pure Nothing
@@ -569,7 +549,7 @@ instance VarLike Text where
 instance VarLike (Maybe Text) where
   varName = pure
 
-instance VarLike (XName p) => VarLike (Name p) where
+instance (VarLike (XName p)) => VarLike (Name p) where
   {-   varName (Local _ i) = do
       mtn <- preview $ #boundVars . ix i
       case mtn of
@@ -594,12 +574,12 @@ class HasBindeeType v where
   type BindeeType v
   type BindeeType v = v
   bindeeType :: v -> Maybe (BindeeType v)
-  default bindeeType :: BindeeType v ~ v => v -> Maybe (BindeeType v)
+  default bindeeType :: (BindeeType v ~ v) => v -> Maybe (BindeeType v)
   bindeeType = Just
 
 instance HasBindeeType (Expr m)
 
-instance HasBindeeType e => HasBindeeType (Maybe e) where
+instance (HasBindeeType e) => HasBindeeType (Maybe e) where
   type BindeeType (Maybe e) = BindeeType e
   bindeeType = (bindeeType =<<)
 
@@ -609,6 +589,18 @@ infixl 6 <@>
 l <@> r =
   withPrecParens 12 $
     l <+> withPrecedence 13 r
+
+data PrettyName = PrettyName {rawName :: !Text, unambName :: !Text}
+  deriving (Show, Eq, Ord, Generic)
+
+toPrettyName :: (VarLike v) => Text -> v -> DocM PrettyEnv PrettyName
+toPrettyName defName v = do
+  var <- fromMaybe defName <$> varName v
+  lvl <- views (#levels . at var) (fromMaybe 0)
+  let name
+        | lvl > 0 = var <> "_" <> tshow lvl
+        | otherwise = var
+  pure PrettyName {rawName = var, unambName = name}
 
 instance
   ( Pretty PrettyEnv (AnnLHS phase)
@@ -624,22 +616,19 @@ instance
   , HasBindeeType (PiVarType phase)
   , Pretty PrettyEnv (BindeeType (PiVarType phase))
   , Pretty PrettyEnv (PiRHS phase)
+  , VarLike (SigmaVarName phase)
+  , HasBindeeType (SigmaVarType phase)
+  , Pretty PrettyEnv (BindeeType (SigmaVarType phase))
+  , Pretty PrettyEnv (SigmaBody phase)
+  , Pretty PrettyEnv (PairFst phase)
+  , Pretty PrettyEnv (PairSnd phase)
+  , VarLike (SplitFstName phase)
+  , VarLike (SplitSndName phase)
+  , Pretty PrettyEnv (SplitScrutinee phase)
+  , Pretty PrettyEnv (SplitBody phase)
   , VarLike (LetName phase)
   , Pretty PrettyEnv (LetRHS phase)
   , Pretty PrettyEnv (LetBody phase)
-  , Pretty PrettyEnv (VecType phase)
-  , Pretty PrettyEnv (VecLength phase)
-  , Pretty PrettyEnv (NilType phase)
-  , Pretty PrettyEnv (ConsType phase)
-  , Pretty PrettyEnv (ConsLength phase)
-  , Pretty PrettyEnv (ConsHead phase)
-  , Pretty PrettyEnv (ConsTail phase)
-  , Pretty PrettyEnv (VecElimEltType phase)
-  , Pretty PrettyEnv (VecElimRetFamily phase)
-  , Pretty PrettyEnv (VecElimBaseCase phase)
-  , Pretty PrettyEnv (VecElimInductiveStep phase)
-  , Pretty PrettyEnv (VecElimLength phase)
-  , Pretty PrettyEnv (VecElimInput phase)
   , Pretty PrettyEnv (RecordFieldType phase)
   , Pretty PrettyEnv (RecordField phase)
   , Pretty PrettyEnv (ProjFieldRecord phase)
@@ -662,71 +651,73 @@ instance
   pretty (App _ l r) = pretty l <@> pretty r
   pretty (Lam _ mv mp body) = withPrecParens 4 $ do
     let mArgTy = bindeeType mp
-    var <- fromMaybe "x" <$> varName mv
-    lvl <- views (#levels . at var) (fromMaybe 0)
-    let varN
-          | lvl > 0 = var <> "_" <> tshow lvl
-          | otherwise = var
+    PrettyName {..} <- toPrettyName "x" mv
     hang
       ( ( char 'λ'
             <+> appWhen
               (isJust mArgTy)
               parens
-              ( text varN <+> forM_ mArgTy \ty ->
+              ( text unambName <+> forM_ mArgTy \ty ->
                   colon <+> pretty ty
               )
         )
           <> char '.'
       )
       2
-      $ instantiate var (pretty body)
+      $ instantiate rawName (pretty body)
   pretty (Pi _ mv mp body) = withPrecParens 4 $ do
     -- TODO: check occurrence of mv in body and
     -- use arrows if absent!
     let mArgTy = bindeeType mp
-    var <- fromMaybe "x" <$> varName mv
-    lvl <- views (#levels . at var) (fromMaybe 0)
-    let varN
-          | lvl > 0 = var <> "_" <> T.pack (show lvl)
-          | otherwise = var
+    PrettyName {..} <- toPrettyName "x" mv
     hang
       ( ( char 'Π'
             <+> appWhen
               (isJust mArgTy)
               parens
-              ( text varN <+> forM_ mArgTy \ty ->
+              ( text unambName <+> forM_ mArgTy \ty ->
                   colon <+> pretty ty
               )
         )
           <> char '.'
       )
       2
-      $ instantiate var (pretty body)
+      $ instantiate rawName (pretty body)
+  pretty (Sigma _ mv mp body) = withPrecParens 4 $ do
+    -- TODO: check occurrence of mv in body and
+    -- use arrows if absent!
+    let mArgTy = bindeeType mp
+    PrettyName {..} <- toPrettyName "x" mv
+    hang
+      ( ( char 'Σ'
+            <+> appWhen
+              (isJust mArgTy)
+              parens
+              ( text unambName <+> forM_ mArgTy \ty ->
+                  colon <+> pretty ty
+              )
+        )
+          <> char '.'
+      )
+      2
+      $ instantiate rawName (pretty body)
+  pretty (Pair _ l r) = do
+    "⟨" <+> pretty l <+> "," <+> pretty r <+> "⟩"
+  pretty (Split _ s l r b) = do
+    PrettyName {rawName = var1, unambName = varN1} <- toPrettyName "fst" l
+    PrettyName {rawName = var2, unambName = varN2} <- toPrettyName "snd" r
+    ("split" <+> "⟨" <+> text varN1 <+> comma <+> text varN2 <+> "⟩")
+      <+> "="
+      <+> pretty s
+      <+> "in"
+      <+> instantiate var1 (instantiate var2 $ pretty b)
   pretty (Let _ n b e) = do
-    var <- fromMaybe "x" <$> varName n
-    lvl <- views (#levels . at var) (fromMaybe 0)
-    let varN
-          | lvl > 0 = var <> "_" <> tshow lvl
-          | otherwise = var
+    PrettyName {..} <- toPrettyName "x" n
     sep
-      [ "let" <+> text varN <+> "=" <+> pretty b
-      , "in" <+> instantiate var (pretty e)
+      [ "let" <+> text unambName <+> "=" <+> pretty b
+      , "in" <+> instantiate rawName (pretty e)
       ]
   -- FIXME: compress numerals
-  pretty (Vec _ a n) =
-    text "Vec" <@> pretty a <@> pretty n
-  pretty (Nil _ a) =
-    text "nil" <@> pretty a
-  pretty (Cons _ a n x xs) =
-    text "cons" <@> pretty a <@> pretty n <@> pretty x <@> pretty xs
-  pretty (VecElim _ a t b i n xs) =
-    text "vecElim"
-      <@> pretty a
-      <@> pretty t
-      <@> pretty b
-      <@> pretty i
-      <@> pretty n
-      <@> pretty xs
   pretty (Record _ (RecordFieldTypes flds)) =
     braces $
       sep $
@@ -779,7 +770,7 @@ instance
       ]
   pretty (XExpr e) = pretty e
 
-tshow :: Show a => a -> Text
+tshow :: (Show a) => a -> Text
 tshow = T.pack . show
 
 instantiate :: Text -> DocM PrettyEnv () -> DocM PrettyEnv ()
@@ -791,5 +782,5 @@ instantiate var act = do
     )
     act
 
-pprint :: Pretty PrettyEnv a => a -> Doc
+pprint :: (Pretty PrettyEnv a) => a -> Doc
 pprint = execDocM (mempty @PrettyEnv) . pretty
