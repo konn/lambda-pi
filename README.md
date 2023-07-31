@@ -18,6 +18,8 @@ With small extension with inferrable annotated lambda term.
 - T. Altenkrich, N. A. Danielsson, A. Löh, and N. Oury: "[_$`\Pi\Sigma`$: Dependent Types without the Sugar_][pisigma]". FLOPS 2010.
 - T. Altenkrich and N. Oury: "[_$`\Pi\Sigma`$: A Core Language for Dependently Typed Programming_][pisigma-draft]".
 - T. Altenkrich: "[_The case of the smart case: How to implement conditional convertibility?_][converting]". Shonan 2011.
+- J. Sjöberg and S. Weirich: "[_Programming up to Congruence (Extended version)_](https://www.seas.upenn.edu/~sweirich/papers/congruence-extended.pdf). POPL '15.
+- M. Willsey, C.Nandi, Y. R. Wang, O. Flatt, Z. Tatlock, and P. Panchekha: "[_egg: Fast and Extensible Equality Saturation_](https://dl.acm.org/doi/10.1145/3434304). POPL '21.
 - T. Altenkrich, C. MacBride, and W. Swiestra: "[_Observational Equality, Now!_][obseq-now]". PLPV '07.
 - L. Pujet and N. Tabareau: "[_Observational Equality: Now for Good_][obseq-now]". POPL 2022.
 - M. Lennon-Bertrand: "[_Complete Bidirectional Typing for the Calculus of Inductive Constructions_][cic-bidir]". 2021.
